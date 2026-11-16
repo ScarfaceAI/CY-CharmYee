@@ -142,6 +142,15 @@ class ReviewedSubtitleTests(WorkspaceCase):
         with self.assertRaisesRegex(ValueError, "重新登记"):
             subtitles.export(task["id"], self.root, reviewed=True)
 
+    def test_an_item_with_nothing_to_align_is_skipped_without_stopping_the_batch(self):
+        task = self.recognized(self.wav, silence(self.parent / "第二段录音.wav", b"\x01\x00"))
+        self.review(task, REVIEWED, "……")
+        result = subtitles.export(task["id"], self.root, reviewed=True)
+        self.assertEqual("partial", result["status"])
+        self.assertEqual([1], [item["number"] for item in result["items"]])
+        self.assertEqual([(2, "unalignable", "校对稿没有可对齐的文字")],
+                         [(item["number"], item["state"], item["reason"]) for item in result["skipped"]])
+
     def test_a_rewrite_is_not_forced_onto_the_timeline(self):
         task = self.recognized()
         self.review(task, "这条视频主要讲武器选择：新手先练步枪，再按地图调整配件。")
@@ -186,6 +195,12 @@ class AlignmentTests(unittest.TestCase):
         self.assertEqual(1, report["changed_chars"])
         self.assertEqual(["好，开始吧"], subtitles.align([{"text": "开始吧"}], "好，开始吧")[0])
 
+    def test_a_side_with_only_punctuation_names_what_cannot_be_aligned(self):
+        with self.assertRaisesRegex(ValueError, "^识别原文只有标点"):
+            subtitles.align([{"text": "……"}], "大家好")
+        with self.assertRaisesRegex(ValueError, "^校对稿没有可对齐的文字"):
+            subtitles.align([{"text": "大家好。"}], "……")
+
     def test_letter_case_and_full_width_digits_still_match(self):
         texts, report = subtitles.align([{"text": "我用iphone拍了３条"}], "我用 iPhone 拍了3条。")
         self.assertEqual(["我用 iPhone 拍了3条。"], texts)
@@ -197,6 +212,14 @@ class AlignmentTests(unittest.TestCase):
         self.assertTrue(any("3.5秒" in line for line in lines), lines)
         self.assertTrue(all(subtitles.width(line) <= 8 for line in lines), lines)
         self.assertEqual([("他说：“好的。”", False), ("然后就走了", False)], subtitles.lines("他说：“好的。”然后就走了", 5))
+
+    def test_thousands_separators_stay_inside_their_number(self):
+        self.assertEqual([("我们买了", False), ("100,000台设备", False)], subtitles.lines("我们买了100,000台设备", 10))
+        self.assertEqual(["我们买了", "100,000", "台设备"],
+                         [subtitles.strip_marks(line) for line, _ in subtitles.lines("我们买了100,000台设备", 8)])
+        self.assertEqual(["1,234,567.5%"], subtitles.TOKEN.findall("1,234,567.5%"))
+        # Only three-digit groups join a number; other commas still separate.
+        self.assertEqual(["1", ",", "0000", "和", "12", ",", "3"], subtitles.TOKEN.findall("1,0000和12,3"))
 
     def test_long_clauses_prefer_natural_breaks_and_flag_cuts_by_length(self):
         self.assertEqual([("今天给大家带来《对峙2》", False), ("里面最适合新手的三把枪。", False)],

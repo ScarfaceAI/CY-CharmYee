@@ -33,7 +33,9 @@ OPENING = set("“‘「『（(【《〈[")
 SOFT_BREAK_AFTER = set("的了着过吗呢吧啊呀哦嘛啦")
 WORD_START = set("也还再又并或却很最更让被给跟所就没")
 NATURAL_BREAK, SCRIPT_BREAK = 6.0, 3.0
-TOKEN = re.compile(r"[A-Za-z0-9]+(?:[.'’\-][A-Za-z0-9]+)*%?|\s+|.", re.S)
+# A grouped number such as 100,000 is one token, so its commas never end a clause or a line.
+TOKEN = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?![0-9])(?:\.[0-9]+)?%?"
+                   r"|[A-Za-z0-9]+(?:[.'’\-][A-Za-z0-9]+)*%?|\s+|.", re.S)
 CJK = "\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef"
 REASONS = {
     "not_registered": "还没有登记校对稿",
@@ -70,8 +72,10 @@ def align(segments: list[dict], reviewed: str) -> tuple[list[str], dict]:
                 raw.append(key(char))
                 raw_owner.append(number)
     positions = [index for index, char in enumerate(reviewed) if is_text(char)]
-    if not raw or not positions:
-        raise ValueError("识别原文或校对稿没有可对齐的文字")
+    if not raw:
+        raise ValueError("识别原文只有标点，没有可对齐的文字")
+    if not positions:
+        raise ValueError("校对稿没有可对齐的文字")
     review = [key(reviewed[index]) for index in positions]
     owner, anchored = [0] * len(review), [False] * len(review)
     matcher = difflib.SequenceMatcher(None, raw, review, autojunk=False)
@@ -248,7 +252,12 @@ def export(task_id: str, root: Path = ROOT, *, reviewed: bool = False, max_chars
                 skipped.append({"id": item["id"], "number": number, "state": row["state"],
                                 "reason": REASONS.get(row["state"]) or row.get("reason") or "校对稿暂不可用"})
                 continue
-            texts, report = align(segments, inside(root, row["file"]).read_text(encoding="utf-8-sig"))
+            review_text = inside(root, row["file"]).read_text(encoding="utf-8-sig")
+            try:
+                texts, report = align(segments, review_text)
+            except ValueError as error:  # one side has no words; the rest of the batch still exports
+                skipped.append({"id": item["id"], "number": number, "state": "unalignable", "reason": str(error)})
+                continue
             if report["match_ratio"] < MIN_MATCH:
                 skipped.append({"id": item["id"], "number": number, "state": "misaligned",
                                 "match_ratio": report["match_ratio"],
