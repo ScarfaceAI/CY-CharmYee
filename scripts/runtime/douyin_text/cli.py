@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
-from . import creator_cli, onboarding, work, continuation, personal_vault_cli
+from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -90,8 +90,13 @@ def parser() -> argparse.ArgumentParser:
     offline = sub.add_parser('reanalyze', help='基于普通任务的已有文稿建立独立离线分析')
     offline.add_argument('task')
     offline.add_argument('--instruction', required=True)
-    for name in ("show", "preview", "export-srt"):
+    for name in ("show", "preview"):
         sub.add_parser(name).add_argument("task")
+    srt = sub.add_parser("export-srt", help="用已存的识别分句时间导出字幕，不调用识别")
+    srt.add_argument("task")
+    srt.add_argument("--reviewed", action="store_true", help="改用已登记的校对稿文字，沿用识别分句时间")
+    srt.add_argument("--max-chars", type=int, help="每条字幕最多几个字（标点不计）；超出时按标点和字数拆开，时间按字数比例估算")
+    srt.add_argument("--strip-end-punct", action="store_true", help="去掉每条字幕首尾的逗号、句号等，保留问号和感叹号")
     finish = sub.add_parser("finish-analysis")
     finish.add_argument("task")
     finish.add_argument("--file", type=Path, required=True)
@@ -193,7 +198,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "preview":
             result = {"sources": vault.publication_plan(workflow.load(args.task))}
         elif args.command == "export-srt":
-            result = {"files": workflow.export_srt(args.task)}
+            if args.reviewed or args.max_chars is not None or args.strip_end_punct:
+                result = subtitles.export(args.task, reviewed=args.reviewed, max_chars=args.max_chars,
+                                          strip_end_punct=args.strip_end_punct)
+            else:  # unchanged machine-text export beside the recognition result
+                result = {"files": workflow.export_srt(args.task)}
         elif args.command == "finish-analysis":
             result = workflow.finish_analysis(args.task, args.file)
         else:

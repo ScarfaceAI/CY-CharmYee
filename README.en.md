@@ -40,7 +40,7 @@ Display names use `CY-xxxx`; host-facing Skill IDs, directories, and invocation 
 - **Preserve and proofread:** keep the machine transcript and existing source media unchanged, save a separate reviewed version, and read the whole text before checking names, numbers, and other uncertainties using the Agent's available image and audio tools.
 - **Analyze and adapt:** summarize, analyze, shorten, or write spoken scripts without overwriting the source.
 - **Analyze a creator or download their videos**: discover accessible videos and image posts page by page and analyze the transcript and actually viewed images over time. A separate mode downloads profile videos and captions without speech recognition. See the [creator workflow](references/creator.en.md).
-- **Deliver batches:** isolate failures, combine completed results in the original order with their original numbers, and report failed items. A resumed task first reuses valid successful caches. An Agent can directly proofread an existing SRT and save a copy with its timecodes; exporting SRT from recognition requires segment timing data.
+- **Deliver batches:** isolate failures, combine completed results in the original order with their original numbers, and report failed items. A resumed task first reuses valid successful caches. An Agent can directly proofread an existing SRT and save a copy with its timecodes; exporting SRT from recognition requires segment timing data. After review, export reviewed subtitles: corrected names and numbers reach the subtitles while the recognition timing is kept, and short-video subtitles can be split by characters per line without trailing punctuation.
 - **Archive and compile:** preserve originals, reviewed text, and derived work separately under the target library's rules, either on request or within an enabled collection scope. Creating a library does not scan or import previous tasks automatically.
 
 Try asking your Agent:
@@ -64,6 +64,8 @@ Try asking your Agent:
 > Shorten this existing transcript into a spoken script while keeping its opening hook: [file path]
 
 > Proofread this SRT and preserve its timecodes: [file path]
+
+> Turn this video into subtitles, fix names and numbers, then export lines of at most 14 characters without trailing punctuation: [link]
 
 > Archive these originals and reviewed transcripts, then compile a topic page: [material]
 

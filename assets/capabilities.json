@@ -62,12 +62,12 @@
       "zh": {
         "title": "整理与导出",
         "example": "把这批文稿按顺序整理成 TXT，再导出已有识别的字幕",
-        "outcome": "顺序编号的 TXT、Markdown 或基于已有识别时码的 SRT；已有 SRT 可交给 Agent 保留时码处理，纯文本不能凭空生成准确时码"
+        "outcome": "顺序编号的 TXT、Markdown 或基于已有识别时码的 SRT；校对后可导出沿用原时码的校对版字幕，并按每行字数拆短；已有 SRT 可交给 Agent 保留时码处理，纯文本不能凭空生成准确时码"
       },
       "en": {
         "title": "Organize and export",
         "example": "Combine these drafts into ordered TXT and export subtitles from existing recognition",
-        "outcome": "Ordered TXT, Markdown, or SRT from existing recognition timing; an Agent can edit existing SRT while preserving timing, but plain text cannot supply accurate timestamps"
+        "outcome": "Ordered TXT, Markdown, or SRT from existing recognition timing; reviewed subtitles keep that timing and can be split into short lines; an Agent can edit existing SRT while preserving timing, but plain text cannot supply accurate timestamps"
       }
     },
     {
