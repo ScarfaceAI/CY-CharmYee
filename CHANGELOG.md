@@ -1,12 +1,20 @@
 # 更新记录
 
-## 未发布
+## 1.8.0 - 2026-11-16
 
-- 校对后可导出校对版字幕：`export-srt --reviewed` 把已登记的校对稿按字对齐回识别分句，人名、数字等更正进入字幕，时间轴沿用原分句。未登记、登记后又改过或依据过期的条目单独列出，不用机器原文顶替；能对上的字不足 60% 的改写稿不会被硬套时间轴。
-- 竖屏短视频可加 `--max-chars` 按每条字数拆成短行，优先在标点、书名号、语气词等自然位置断开，拆分时间按字数比例估算；`--strip-end-punct` 去掉每条首尾的逗号、句号，保留问号和感叹号。两项也可用于机器原文。需要抽查的字幕（多为改动、读速偏快或按字数硬拆）列在 `check_cues`。新字幕按内容哈希另存在任务交付目录；不带参数的 `export-srt` 行为不变。
+- 校对后可导出校对版字幕：`export-srt --reviewed` 把已登记的校对稿按字对齐回识别分句，人名、数字等更正进入字幕，时间轴沿用原分句，不重新调用语音识别。未登记、登记后又改过、依据过期，或校对稿与识别原文只有标点的条目单独列出，不用机器原文顶替，也不影响同批其他条目；能对上的字不足 60% 的改写稿不会被硬套时间轴。
+- 竖屏短视频可加 `--max-chars` 按每条字数拆成短行，优先在标点、书名号、语气词等自然位置断开，英文单词和数字（含 100,000 这类千分位写法）不拆开，拆分时间按字数比例估算；`--strip-end-punct` 去掉每条首尾的逗号、句号，保留问号和感叹号。两项也可用于机器原文。需要抽查的字幕（多为改动、读速偏快或按字数硬拆）列在 `check_cues`。新字幕按内容哈希另存在任务交付目录；不带参数的 `export-srt` 行为不变。
+- 已安装承意 1.6.0 及以后可用 `update --apply` 正常更新；新参数都是可选的，配置、凭据和任务数据无需迁移。旧品牌首次切换仍需运行新安装器。
+- 发布前本地完整行为测试 261 项通过。功能合并后自动审查指出的千分位数字被拆开、单条只有标点中断整批导出两个问题已修复，并补充回归测试。GitHub CI 与公开安装包证据见正式 Release 的公开验证附录。真实豆包识别、真实视频全流程和导入剪映后的显示效果未验证。
 
-- Export reviewed subtitles: `export-srt --reviewed` aligns the registered review text with the recognition segments, so corrected names and numbers reach the subtitles while the original timing is kept. Items without a current valid review are listed instead of falling back to machine text, and a rewrite matching less than 60% of the recognized characters is not forced onto the timeline.
-- For vertical video, `--max-chars` splits subtitles into short lines, preferring punctuation, title marks and particles; split timing is estimated by character share. `--strip-end-punct` removes commas and full stops at either end of a line while keeping question and exclamation marks. Both options also work on machine text. Cues worth a spot check (mostly corrected, fast reading, or cut by length) are listed in `check_cues`. New files are saved by content hash in the task delivery folder; `export-srt` without options is unchanged.
+功能、升级条件和验证边界见[1.8.0 版本说明](docs/releases/v1.8.0.md)。
+
+- Export reviewed subtitles: `export-srt --reviewed` aligns the registered review text with the recognition segments, so corrected names and numbers reach the subtitles while the original timing is kept, without a new speech request. Items without a current valid review, or with only punctuation on either side, are listed instead of falling back to machine text and do not stop the rest of the batch; a rewrite matching less than 60% of the recognized characters is not forced onto the timeline.
+- For vertical video, `--max-chars` splits subtitles into short lines, preferring punctuation, title marks and particles, and never splits English words or numbers, including thousands-separated amounts such as 100,000; split timing is estimated by character share. `--strip-end-punct` removes commas and full stops at either end of a line while keeping question and exclamation marks. Both options also work on machine text. Cues worth a spot check (mostly corrected, fast reading, or cut by length) are listed in `check_cues`. New files are saved by content hash in the task delivery folder; `export-srt` without options is unchanged.
+- Installed CY-CharmYee 1.6.0 or later can update normally with `update --apply`. All new options are optional, and configuration, credentials and task data need no migration. Old-brand installations still need the new installer for their first migration.
+- Final local pre-release regression passed 261 behavioral tests. Two issues raised by automated review after the feature merged, split thousands-separated numbers and a punctuation-only item stopping the whole export, were fixed with regression tests. Final CI and public-package evidence is recorded in the formal Release verification appendix. Live Doubao recognition, a full real-video run, and display after import into JianYing remain unverified.
+
+See the [1.8.0 release notes](docs/releases/v1.8.0.md) for upgrade guidance and evidence boundaries.
 
 ## 1.7.0 - 2026-11-13
 
