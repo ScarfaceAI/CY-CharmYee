@@ -1,5 +1,13 @@
 # 更新记录
 
+## 未发布
+
+- 校对后可导出校对版字幕：`export-srt --reviewed` 把已登记的校对稿按字对齐回识别分句，人名、数字等更正进入字幕，时间轴沿用原分句。未登记、登记后又改过或依据过期的条目单独列出，不用机器原文顶替；能对上的字不足 60% 的改写稿不会被硬套时间轴。
+- 竖屏短视频可加 `--max-chars` 按每条字数拆成短行，优先在标点、书名号、语气词等自然位置断开，拆分时间按字数比例估算；`--strip-end-punct` 去掉每条首尾的逗号、句号，保留问号和感叹号。两项也可用于机器原文。需要抽查的字幕（多为改动、读速偏快或按字数硬拆）列在 `check_cues`。新字幕按内容哈希另存在任务交付目录；不带参数的 `export-srt` 行为不变。
+
+- Export reviewed subtitles: `export-srt --reviewed` aligns the registered review text with the recognition segments, so corrected names and numbers reach the subtitles while the original timing is kept. Items without a current valid review are listed instead of falling back to machine text, and a rewrite matching less than 60% of the recognized characters is not forced onto the timeline.
+- For vertical video, `--max-chars` splits subtitles into short lines, preferring punctuation, title marks and particles; split timing is estimated by character share. `--strip-end-punct` removes commas and full stops at either end of a line while keeping question and exclamation marks. Both options also work on machine text. Cues worth a spot check (mostly corrected, fast reading, or cut by length) are listed in `check_cues`. New files are saved by content hash in the task delivery folder; `export-srt` without options is unchanged.
+
 ## 1.7.0 - 2026-11-13
 
 - 个人知识库扩展为生活、工作、学习三个方向。新启用后默认都参与，起步选择顺序为 1 学习、2 工作、3 生活；选择只决定先从哪里聊，不限制其他方向。
