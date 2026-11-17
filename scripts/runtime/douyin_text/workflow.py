@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers, lexicon, suspects
+from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers, lexicon, suspects, hotwords
 from .common import ROOT, ArtifactBusyError, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
@@ -85,7 +85,7 @@ def suspect_summary(task: dict, root: Path = ROOT) -> dict:
             ready += 1
             notices.update(saved.get('notices', []))
             for kind in counts:
-                counts[kind] += saved['counts'][kind]
+                counts[kind] += saved['counts'].get(kind, 0)
     missing = len(task['results']) - ready
     message = suspects.summary(counts) if ready else ''
     if len(task['results']) > 1 and message:
@@ -396,6 +396,7 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
                         binding.get('chunks_sha256') != [chunk['sha256'] for chunk in chunks]):
             raise RuntimeError('音轨来源绑定与分片不一致，保留现场；未提交豆包')
         recognized = []
+        selected = None
         for index, chunk in enumerate(chunks):
             chunk_path = folder / f"chunk-{index:05d}.json"
             prior = read_json(chunk_path) if chunk_path.exists() else {}
@@ -414,9 +415,13 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
             response_path = folder / "responses" / (request_id + ".json")
             try:
                 if engine_for(task) == 'local':
+                    if selected is None:
+                        if type(cfg['asr_hotwords']) is not bool:
+                            raise ValueError('asr_hotwords 必须是布尔值 true 或 false。')
+                        selected = hotwords.select(job, root, limit=cfg['asr_hotwords_limit']) if cfg['asr_hotwords'] else []
                     if progress:
                         progress.current(job, index)
-                    result = worker.recognize(folder / 'audio' / chunk['file'], folder, cfg, profile_for(task))
+                    result = worker.recognize(folder / 'audio' / chunk['file'], folder, cfg, profile_for(task), hotwords=selected)
                 else:
                     result = asr.recognize(folder / "audio" / chunk["file"], auth, response_path,
                                            timeout=cfg["asr_timeout_seconds"], request_id=request_id)
@@ -441,9 +446,21 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
         if engine_for(task) == 'local':
             result.pop('request_ids')
             result.update({key: recognized[0][key] for key in ('model', 'model_sha256', 'vad_sha256',
-                'parameters', 'asr_profile', 'sherpa_onnx_version', 'threads', 'hotwords')})
-            result.update(engine=local_asr.ENGINE, chunk_execution=[{key: item[key] for key in
-                ('threads', 'recognizer_threads', 'worker_pid', 'elapsed_seconds', 'sherpa_onnx_version')} for item in recognized])
+                'parameters', 'asr_profile', 'sherpa_onnx_version', 'threads')})
+            result['hotwords'] = list({entry['word']: entry for item in recognized
+                                      for entry in (item.get('hotwords') or []) if isinstance(entry, dict)}.values())
+            result['hotword_seconds'] = sum(item.get('hotword_seconds', 0) for item in recognized)
+            result['hotword_reviews'] = []
+            segment_offset = 0
+            for chunk_index, (chunk, item) in enumerate(zip(chunks, recognized), 1):
+                result['hotword_reviews'].extend(hotwords.offset_review(r, segment_offset, chunk['offset'], chunk_index)
+                                                for r in item.get('hotword_reviews', []))
+                segment_offset += len(item['segments'])
+            result.update(engine=local_asr.ENGINE, chunk_execution=[{
+                **{key: item[key] for key in ('threads', 'recognizer_threads', 'worker_pid',
+                                              'elapsed_seconds', 'sherpa_onnx_version')},
+                **{key: item[key] for key in ('recognition_seconds', 'hotword_seconds') if key in item}}
+                for item in recognized])
             apply_display(result, display)
         if binding:
             result['source_media_sha256'] = binding['source_sha256']

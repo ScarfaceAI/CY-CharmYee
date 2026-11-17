@@ -9,8 +9,9 @@ import re
 from . import lexicon
 from .common import ROOT, digest, now, read_json, relative, write_json
 
-RULES_VERSION = '2'
-LABELS = {'phonetic': '人名或术语', 'memory': '纠错记忆', 'number': '数字', 'hallucination': '疑似编造'}
+RULES_VERSION = '4'
+LABELS = {'phonetic': '人名或术语', 'memory': '纠错记忆', 'number': '数字', 'hallucination': '疑似编造',
+          'hotword': '热词两遍不一致'}
 MAX_TERM_LENGTH = 12
 REPEAT_MIN_COUNT = 4
 REPEAT_MIN_CHARS = 16
@@ -104,7 +105,7 @@ def summary(counts: dict, next_step: str = '校对时先看 suspects.md') -> str
     total = sum(counts.values())
     if not total:
         return '这条稿子没有检测到疑点，校对时仍需核对人名、数字和术语。'
-    details = '、'.join(f'{label} {counts[key]}' for key, label in LABELS.items() if counts[key])
+    details = '、'.join(f'{label} {counts[key]}' for key, label in LABELS.items() if counts.get(key))
     return f'这条稿子有 {total} 处疑点（{details}），{next_step}。'
 
 
@@ -232,6 +233,41 @@ def analyze(result: dict, context: dict, vocabulary: Vocabulary) -> dict:
             row.update(segment=first_index, start=first.get('start'), sentence='／'.join(x[2] for x in repeated),
                        original=first_text, offset_start=0, offset_end=len(first_text), raw_start=first_start,
                        raw_end=(raw_start + len(text) if raw_start is not None else None))
+    # VAD-level reviews keep short-segment text untouched. Cross-boundary hints
+    # are anchored once at their first segment, with a combined sentence/range.
+    located = {index: (segment, text, start) for index, segment, text, start in _segments(result)}
+    for review in result.get('hotword_reviews', []):
+        for hit in review['hits']:
+            spans = hit['spans']
+            if not spans:
+                continue
+            first, last = spans[0], spans[-1]
+            segment, _, raw_start = located[first['segment']]
+            ending, _, raw_end = located[last['segment']]
+            covered = list(range(first['segment'], last['segment'] + 1))
+            sentence = ''.join(located[i][1] for i in covered)
+            a = first['start']
+            b = sum(len(located[i][1]) for i in covered[:-1]) + last['end']
+            row = {'segment': first['segment'], 'covered_segments': covered, 'spans': spans,
+                   'start': segment.get('start'), 'end': ending.get('end'), 'sentence': sentence,
+                   'original': sentence[a:b], 'type': 'hotword', 'type_label': LABELS['hotword'],
+                   'offset_start': a, 'offset_end': b,
+                   'raw_start': raw_start + a if raw_start is not None else None,
+                   'raw_end': raw_end + last['end'] if raw_end is not None else None,
+                   'candidates': [{'word': hit['replacement'], 'source': '带热词重听', 'hotword': hit['word']}],
+                   'reasons': [f'带热词重听这一段时，模型听成了“{hit["replacement"]}”；两种写法都给出，请按上下文判断。'],
+                   'merged_types': ['hotword']}
+            overlap = [old for old in rows if old['type'] in {'phonetic', 'hotword'}
+                       and old['raw_start'] is not None and row['raw_start'] is not None
+                       and old['raw_end'] is not None and row['raw_end'] is not None
+                       and old['raw_start'] < row['raw_end'] and old['raw_end'] > row['raw_start']]
+            for old in overlap:
+                row['reasons'].extend(r for r in old['reasons'] if r not in row['reasons'])
+                row['candidates'].extend(c for c in old['candidates']
+                                         if c['word'] not in {x['word'] for x in row['candidates']})
+                row['merged_types'] = sorted(set(row['merged_types']) | set(old.get('merged_types', [old['type']])))
+                rows.remove(old)
+            rows.append(row)
     rows.sort(key=lambda row: (row['segment'], row['offset_start'], row['offset_end'], list(LABELS).index(row['type'])))
     counts = {kind: sum(row['type'] == kind for row in rows) for kind in LABELS}
     notices = [] if vocabulary.general_status['ready'] else [vocabulary.general_status['tell_user']]

@@ -88,7 +88,8 @@ def write_json(path: Path, value) -> None:
 def config(root: Path = ROOT) -> dict:
     defaults = {"chunk_seconds": 300, "asr_timeout_seconds": 300, "vault_root": None, "assistant_root": None,
                 "asr_engine": "doubao", "asr_threads": None, "asr_queue_timeout_seconds": 600,
-                "asr_background_threshold_seconds": 120, "number_conversion": True, "cjk_spacing": True}
+                "asr_background_threshold_seconds": 120, "number_conversion": True, "cjk_spacing": True,
+                "asr_hotwords": True, "asr_hotwords_limit": 20}
     path = root / "config.json"
     return {**defaults, **(read_json(path) if path.exists() else {})}
 

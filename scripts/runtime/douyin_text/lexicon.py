@@ -145,6 +145,37 @@ def general_words() -> tuple[frozenset[str], dict]:
         return frozenset(), {'ready': False, 'status': 'failed', 'reason': str(exc), 'tell_user': GENERAL_FAILED}
 
 
+def general_frequencies() -> tuple[dict[str, int], dict]:
+    """Read/hash a pinned dictionary once per process; share its immutable snapshot."""
+    from types import MappingProxyType
+    try:
+        spec = general_manifest()
+        item = next(f for f in spec['files'] if f['category'] == 'general')
+        cache = getattr(general_frequencies, '_cache', {})
+        if item['sha256'] in cache:
+            return cache[item['sha256']]
+        snapshot = {'id': spec['id'], 'version': spec['version'], 'revision': spec['revision'],
+                    'sha256': item['sha256']}
+        path = models._path(public_folder(spec), item['path'])
+        if not path.is_file():
+            status = ensure_general()
+            return {}, {**snapshot, **status, 'ready': False}
+        data = path.read_bytes()
+        if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            ensure_general()
+            return {}, {**snapshot, 'ready': False, 'status': 'failed', 'tell_user': GENERAL_FAILED}
+        frequencies = {}
+        for line in data.decode('utf-8-sig').splitlines():
+            if line.strip():
+                word, frequency, *_ = line.split()
+                frequencies[word] = int(frequency)
+        result = (MappingProxyType(frequencies), {**snapshot, 'ready': True, 'status': 'ready', 'tell_user': ''})
+        general_frequencies._cache = {**cache, item['sha256']: result}
+        return result
+    except (OSError, ValueError, KeyError, StopIteration, models.ModelError) as exc:
+        return {}, {'ready': False, 'status': 'failed', 'reason': str(exc), 'tell_user': GENERAL_FAILED}
+
+
 class PublicLexicon:
     """One snapshot per operation; active consumers may request nonblocking preparation."""
 

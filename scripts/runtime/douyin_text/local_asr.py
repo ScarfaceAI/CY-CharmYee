@@ -14,7 +14,7 @@ import time
 import uuid
 import wave
 
-from . import models, processes
+from . import models, processes, hotwords as hotword_rules, lexicon
 from .common import read_json, write_json
 
 ENGINE = 'sherpa-onnx-qwen3-asr'
@@ -211,28 +211,83 @@ def split_segment(start: int, samples):
         yield start + offset, samples[offset:]
 
 
-def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords: str | None = None) -> dict:
+def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords=None) -> dict:
     # Silence never loads the large recognizer or creates a decoding stream.
     parts = vad_segments(vad_new(paths['silero_vad']), read_wav(audio))
     segments = []
     timings = {}
+    pending = []
+    reviews = []
+    hotword_seconds = 0.0
     recognizer_threads = None
     if parts:
         load_started = time.monotonic()
         recognizer = create(paths, threads, profile)
         timings['model_load_seconds'] = time.monotonic() - load_started
         recognizer_threads = recognizer.config.model_config.num_threads
-        for start, samples in parts:
+        for group_number, (start, samples) in enumerate(parts, 1):
+            first = len(segments)
             for at, piece in split_segment(start, samples):
                 stream = recognizer.create_stream()
-                if hotwords is not None:
-                    stream.set_option('hotwords', hotwords)
                 stream.accept_waveform(SAMPLE_RATE, piece)
                 recognizer.decode_stream(stream)
                 raw = stream.result.text
                 segments.append({'start': at / SAMPLE_RATE, 'end': (at + len(piece)) / SAMPLE_RATE,
                                  'text': raw, 'raw_text': raw})
-    return {'text': ''.join(s['text'] for s in segments), 'segments': segments, 'hotwords': hotwords,
+            if hotwords:
+                pending.append((group_number, first, len(segments), start, samples))
+        # Finish every unprompted stream first. All extra work, including screening
+        # and dictionary reads, is excluded from the first-pass speed calibration.
+        if pending:
+            started = time.monotonic()
+            general, general_status = lexicon.general_frequencies()
+            for group_number, first, last, sample_start, samples in pending:
+                group = segments[first:last]
+                raw = ''.join(s['raw_text'] for s in group)
+                screen = hotword_rules.prescreen(raw, hotwords)
+                if not screen:
+                    continue
+                windows = []
+                spans = hotword_rules.segment_spans(group)
+                for a, b in hotword_rules.review_windows(group, screen):
+                    raw_start, raw_end = spans[a][0], spans[b - 1][1]
+                    matched = [h for h in screen if h['start'] < raw_end and h['end'] > raw_start]
+                    words = list(dict.fromkeys(h['word'] for h in matched))
+                    audio_start = round(group[a]['start'] * SAMPLE_RATE) - sample_start
+                    audio_end = round(group[b - 1]['end'] * SAMPLE_RATE) - sample_start
+                    listened = time.monotonic()
+                    stream = recognizer.create_stream()
+                    stream.set_option('hotwords', ','.join(words))
+                    stream.accept_waveform(SAMPLE_RATE, samples[audio_start:audio_end])
+                    recognizer.decode_stream(stream)
+                    candidate = stream.result.text
+                    seconds = time.monotonic() - listened
+                    comparison = hotword_rules.compare(raw[raw_start:raw_end], candidate, words,
+                                                       general if general_status['ready'] else None)
+                    comparison['hits'] = [hotword_rules.locate_hit(h, group[a:b], first + a + 1)
+                                          for h in comparison['hits']]
+                    windows.append({'segments': list(range(first + a + 1, first + b + 1)),
+                        'start': group[a]['start'], 'end': group[b - 1]['end'],
+                        'raw_start': raw_start, 'raw_end': raw_end, 'raw_text': raw[raw_start:raw_end],
+                        'text': candidate, 'words': words, 'seconds': seconds, **comparison})
+                hits = {}
+                for window in windows:
+                    for hit in window['hits']:
+                        key = (tuple((s['segment'], s['start'], s['end']) for s in hit['spans']),
+                               hit['word'], hit['replacement'])
+                        hits.setdefault(key, {**hit, 'start': window['raw_start'] + hit['start'],
+                                              'end': window['raw_start'] + hit['end']})
+                reviews.append({'vad_segment': group_number, 'segments': list(range(first + 1, last + 1)),
+                    'start': group[0]['start'], 'end': group[-1]['end'], 'raw_text': raw, 'screen': screen,
+                    'words': list(dict.fromkeys(h['word'] for h in screen)), 'windows': windows,
+                    'hits': list(hits.values()), 'seconds': sum(w['seconds'] for w in windows),
+                    'other_changes': sum(w['other_changes'] for w in windows),
+                    'formatting_changes': sum(w['formatting_changes'] for w in windows),
+                    'rules_version': hotword_rules.RULES_VERSION, 'general_ready': general_status['ready'],
+                    'max_seconds': hotword_rules.REVIEW_MAX_SECONDS})
+            hotword_seconds = time.monotonic() - started
+    return {'text': ''.join(s['text'] for s in segments), 'segments': segments, 'hotwords': hotwords or [],
+            'hotword_seconds': hotword_seconds, 'hotword_reviews': reviews,
             'recognizer_threads': recognizer_threads, **timings}
 
 
@@ -266,7 +321,8 @@ class Worker(processes.Worker):
         response = request_file.with_suffix('.response.json')
         progress = request_file.with_suffix('.progress.json')
         write_json(request_file, {'audio': str(audio), 'threads': thread_count(cfg), 'profile': profile,
-            'queue_timeout': cfg['asr_queue_timeout_seconds'], 'hotwords': hotwords,
+            'queue_timeout': cfg['asr_queue_timeout_seconds'],
+            'hotwords': (hotwords or []) if cfg.get('asr_hotwords', True) else [],
             'response_file': str(response), 'progress_file': str(progress)})
         self.process.stdin.write((str(request_file) + '\n').encode('utf-8'))
         self.process.stdin.flush()

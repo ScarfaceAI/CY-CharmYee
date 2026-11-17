@@ -70,7 +70,7 @@ class LocalASRTests(WorkspaceCase):
         self.assertEqual(4.2, len(parts[0][1]) / 16000)
         self.assertEqual(18 * 16000, sum(len(p) for _, p in parts))
 
-    def test_new_stream_per_segment_hotwords_and_sample_times(self):
+    def test_new_unprompted_stream_per_segment_and_sample_times(self):
         import numpy as np
         streams = []
         def new_stream():
@@ -81,10 +81,10 @@ class LocalASRTests(WorkspaceCase):
         with patch.object(local_asr, 'vad_new'), patch.object(local_asr, 'vad_segments', return_value=[
                 (123, np.ones(22 * 16000 + 17, dtype=np.float32))]), \
              patch.object(local_asr, 'create', return_value=recognizer):
-            result = local_asr.recognize(self.wav, {'silero_vad': 'vad'}, 2, 'profile', hotwords='承意')
+            result = local_asr.recognize(self.wav, {'silero_vad': 'vad'}, 2, 'profile', hotwords=[{'word': '承意'}])
         self.assertEqual(2, len(streams))
         for stream in streams:
-            stream.set_option.assert_called_once_with('hotwords', '承意')
+            stream.set_option.assert_not_called()
         self.assertEqual(123 / 16000, result['segments'][0]['start'])
         self.assertEqual((123 + 22 * 16000 + 17) / 16000, result['segments'][-1]['end'])
         self.assertEqual(result['segments'][0]['end'], result['segments'][1]['start'])
@@ -295,7 +295,9 @@ class LocalASRTests(WorkspaceCase):
         before = (digest(lock_path), lock_path.stat().st_mtime_ns)
         env = {**os.environ, 'CY_MODEL_DIR': str(model_root),
                'PYTHONPATH': str(support.SKILL_ROOT / 'scripts/runtime')}
-        command = [sys.executable, '-B', '-X', 'utf8', '-c',
+        # The Windows venv launcher can outlive/exit before its real interpreter.
+        # This stdlib-only lock fixture must kill the process that owns the lock.
+        command = [sys._base_executable, '-B', '-X', 'utf8', '-c',
             "from douyin_text.local_asr import recognition_lock; import sys; "
             "lock=recognition_lock(1); lock.__enter__(); print('locked', flush=True); sys.stdin.readline()"]
         child = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

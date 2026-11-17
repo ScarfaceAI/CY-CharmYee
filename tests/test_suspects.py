@@ -114,7 +114,7 @@ class SuspectTests(WorkspaceCase):
         status = {'ready': False, 'status': 'downloading', 'tell_user': lexicon.GENERAL_DOWNLOADING}
         with patch.object(lexicon, 'general_words', return_value=(frozenset(), status)):
             done = workflow.recalculate_suspects('dy-missing', self.root)
-        self.assertEqual({'phonetic': 0, 'memory': 1, 'number': 1, 'hallucination': 1}, done['suspects']['counts'])
+        self.assertEqual({'phonetic': 0, 'memory': 1, 'number': 1, 'hallucination': 1, 'hotword': 0}, done['suspects']['counts'])
         self.assertIn('通用词表正在后台下载', done['tell_user'])
         self.assertIn('跳过同音疑点', workflow.show('dy-missing', self.root)['tell_user'])
         report = read_json(self.path(done['results'][0]['suspects']['json']))
@@ -142,7 +142,7 @@ class SuspectTests(WorkspaceCase):
     def test_memory_hits_even_when_original_is_common_with_counts(self):
         self.recorded('激发，激发。', '击发，击发。')
         report = self.analyze('激发。', general={'激发'})
-        self.assertEqual({'phonetic': 0, 'memory': 1, 'number': 0, 'hallucination': 0}, report['counts'])
+        self.assertEqual({'phonetic': 0, 'memory': 1, 'number': 0, 'hallucination': 0, 'hotword': 0}, report['counts'])
         self.assertEqual('击发', report['items'][0]['candidates'][0]['word'])
         self.assertEqual(2, report['items'][0]['candidates'][0]['count'])
 

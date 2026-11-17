@@ -292,7 +292,8 @@ lexicon.ensure_public = lambda: {'ready': False, 'status': 'downloading', 'tell_
 lexicon.ensure_general = lambda: {'ready': False, 'status': 'downloading', 'tell_user': lexicon.GENERAL_DOWNLOADING}
 class FakeWorker:
     def __init__(self, *args): self.on_progress = None
-    def recognize(self, *args):
+    def recognize(self, *args, hotwords=None):
+        assert isinstance(hotwords, list)
         if self.on_progress: self.on_progress({'status': 'recognizing'})
         time.sleep(0.15)
         return ''' + repr(recognized()) + '''
