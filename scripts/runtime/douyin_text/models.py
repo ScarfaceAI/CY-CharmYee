@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import argparse
-import ctypes
-from ctypes import wintypes
 import http.client
 import os
 from pathlib import Path, PurePosixPath
@@ -18,7 +16,8 @@ import time
 from urllib import request, error
 import uuid
 
-from . import identity
+from . import identity, processes
+from .processes import _kernel, _birth, _process_birth
 from .common import SKILL_ROOT, digest, now, read_json, write_json
 
 MANIFEST = SKILL_ROOT / 'assets/models.json'
@@ -114,47 +113,6 @@ def _read(folder: Path, name: str) -> dict:
         return read_json(path)
     except FileNotFoundError:
         return {}
-
-
-def _kernel():
-    api = ctypes.WinDLL('kernel32', use_last_error=True)
-    for name, args, result in (
-        ('OpenProcess', [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
-        ('GetProcessTimes', [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4, wintypes.BOOL),
-        ('WaitForSingleObject', [wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
-        ('TerminateProcess', [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
-        ('CloseHandle', [wintypes.HANDLE], wintypes.BOOL)):
-        method = getattr(api, name)
-        method.argtypes, method.restype = args, result
-    return api
-
-
-def _birth(api, handle) -> str | None:
-    if api.WaitForSingleObject(handle, 0) != 258:  # WAIT_TIMEOUT: still running
-        return None
-    times = [wintypes.FILETIME() for _ in range(4)]
-    if not api.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
-        return None
-    return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
-
-
-def _process_birth(pid: int) -> str | None:
-    if not isinstance(pid, int) or pid <= 0:
-        return None
-    if os.name == 'nt':
-        api = _kernel()
-        handle = api.OpenProcess(0x1000 | 0x100000, False, pid)
-        if not handle:
-            return None
-        try:
-            return _birth(api, handle)
-        finally:
-            api.CloseHandle(handle)
-    try:
-        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-        return fields[19] if fields[0] != 'Z' else None
-    except (OSError, IndexError):
-        return None
 
 
 def _alive(progress: dict) -> bool:
@@ -502,19 +460,12 @@ def _launch(model_id: str, folder: Path, progress: Progress):
                CY_MODEL_DIR=str(folder.parent), CY_STATE_DIR=str(identity.state_root()), CY_UPDATE_CHECK='0')
     options = dict(stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    env=env, cwd=Path(__file__).resolve().parent.parent)
+    child, breakaway = processes.launch_background(command, **options)
     if os.name == 'nt':
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.BELOW_NORMAL_PRIORITY_CLASS
-        try:
-            child = subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **options)
-            progress.data['job_breakaway'] = True
-        except OSError as exc:
-            if exc.winerror != 5:
-                raise
-            child = subprocess.Popen(command, creationflags=flags, **options)
-            progress.data.update(job_breakaway=False,
-                background_warning='宿主不允许脱离作业对象，后台下载可能随宿主结束；可用 models download --wait 续传。')
-    else:
-        child = subprocess.Popen(command, start_new_session=True, **options)
+        progress.data['job_breakaway'] = breakaway
+        if not breakaway:
+            progress.data['background_warning'] = ('宿主不允许脱离作业对象，后台下载可能随宿主结束；'
+                                                   '可用 models download --wait 续传。')
     try:
         birth = _process_birth(child.pid)
         if not birth:
@@ -587,21 +538,12 @@ def cancel(model_id: str = DEFAULT_MODEL) -> dict:
         return status(model_id)
     if not progress.get('background'):
         raise ModelError('这是前台下载或导入，请在启动它的终端按 Ctrl+C 中断。')
-    if os.name == 'nt':
-        api = _kernel()
-        handle = api.OpenProcess(0x1000 | 0x100000 | 1, False, progress['pid'])
-        if not handle:
-            raise ModelError('无法打开后台下载进程，请重新查看 models status')
-        try:
-            # Identity check and termination use the SAME handle, preventing PID reuse races.
-            if _birth(api, handle) != progress['process_birth']:
-                raise ModelError('进程身份已变化，拒绝结束不属于本次下载的进程')
-            if not api.TerminateProcess(handle, 130) or api.WaitForSingleObject(handle, 5000) != 0:
-                raise ModelError('后台下载进程未能结束，请重新查看 models status')
-        finally:
-            api.CloseHandle(handle)
-    else:
-        raise ModelError('本功能的后台取消仅支持 Windows，请在前台使用 --wait。')
+    try:
+        processes.terminate_registered(progress, subject='后台下载', owner='本次下载',
+                                       hint='请重新查看 models status',
+                                       unsupported='本功能的后台取消仅支持 Windows，请在前台使用 --wait。')
+    except RuntimeError as exc:
+        raise ModelError(str(exc)) from None
     with _lock(model_id, folder):
         current = _read(folder, 'progress.json')
         if current.get('token') == progress['token'] and current.get('state') in ACTIVE:

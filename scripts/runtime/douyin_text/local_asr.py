@@ -1,4 +1,4 @@
-"""CPU Qwen3-ASR, bounded speech segments and a foreground-owned worker."""
+"""CPU Qwen3-ASR, bounded speech segments and a parent-owned worker."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -29,6 +29,30 @@ SPLIT = {'max_seconds': 15, 'search_from_seconds': 10, 'frame_samples': 320,
 PARAMETERS = {'decode': DECODE, 'vad': VAD, 'split': SPLIT, 'sample_rate': SAMPLE_RATE,
               'vad_num_threads': 1, 'vad_provider': 'cpu', 'vad_buffer_seconds': 120}
 _recognizers = {}
+
+
+def speed_coefficient(profile: str, threads: int) -> float:
+    path = models.model_root() / 'asr-calibration.json'
+    data = read_json(path) if path.is_file() else {}
+    value = data.get(f'{profile}:{threads}', {}).get('coefficient', 0.3)
+    return value if type(value) in (int, float) and math.isfinite(value) and value > 0 else 0.3
+
+
+def calibrate(profile: str, threads: int, audio_seconds: float, recognition_seconds: float) -> dict:
+    # Called by the child while holding the machine recognition lock, excluding queue/verification time.
+    if audio_seconds <= 0 or recognition_seconds <= 0:
+        raise ValueError('速度校准需要大于 0 的音频时长和识别耗时。')
+    path = models.model_root() / 'asr-calibration.json'
+    data = read_json(path) if path.is_file() else {}
+    key = f'{profile}:{threads}'
+    prior = data.get(key, {})
+    ratio = recognition_seconds / audio_seconds
+    value = {'coefficient': 0.8 * prior['coefficient'] + 0.2 * ratio if prior else ratio,
+             'samples': prior.get('samples', 0) + 1, 'last_ratio': ratio,
+             'audio_seconds': audio_seconds, 'recognition_seconds': recognition_seconds}
+    data[key] = value
+    write_json(path, data)
+    return value
 
 
 def profile_for(metadata: dict) -> str:
@@ -224,6 +248,7 @@ class Worker(processes.Worker):
     def __init__(self, log: Path):
         super().__init__(log, [sys.executable, '-B', '-X', 'utf8', '-m', 'douyin_text.local_asr_worker'],
                          low_priority=True)
+        self.on_progress = None
 
     def __enter__(self):
         return self
@@ -242,11 +267,16 @@ class Worker(processes.Worker):
             'response_file': str(response), 'progress_file': str(progress)})
         self.process.stdin.write((str(request_file) + '\n').encode('utf-8'))
         self.process.stdin.flush()
-        announced = False
+        last_state = None
         while not response.is_file():
-            if progress.is_file() and not announced:
-                print(read_json(progress)['tell_user'], file=sys.stderr, flush=True)
-                announced = True
+            if progress.is_file():
+                update = read_json(progress)
+                if update['status'] != last_state:
+                    last_state = update['status']
+                    if update.get('tell_user'):
+                        print(update['tell_user'], file=sys.stderr, flush=True)
+                    if self.on_progress:
+                        self.on_progress(update)
             if self.process.poll() is not None:
                 raise RuntimeError('本地识别子进程提前退出，已完成的分片已保留；详情见本地识别日志。')
             time.sleep(0.025)

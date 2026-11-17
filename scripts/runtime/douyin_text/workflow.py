@@ -7,8 +7,8 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media, local_asr
-from .common import ROOT, artifact_lock, config, digest, inside, now, read_json, relative, write_json
+from . import acquisition, asr, credentials, media, local_asr, background, processes
+from .common import ROOT, ArtifactBusyError, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
 LEGACY_ASR_PROFILE = '0426d7a84e24'
@@ -207,7 +207,7 @@ def local_jobs(value: str, saved: list[dict], task: dict, root: Path) -> list[di
 
 
 def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool = False,
-               worker=None) -> dict:
+               worker=None, progress=None) -> dict:
     pin_asr(task, root)
     if engine_for(task) == 'local':
         cached = cached_result(job, task, root)
@@ -218,11 +218,11 @@ def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool =
             return {'id': job['id'], **waiting}
         if worker is None:
             with local_asr.Worker(root / '.cache' / job['id'] / version_for(task) / 'local-asr.log') as owned:
-                return _transcribe(job, task, root, retry_failed=retry_failed, worker=owned)
-    return _transcribe(job, task, root, retry_failed=retry_failed, worker=worker)
+                return _transcribe(job, task, root, retry_failed=retry_failed, worker=owned, progress=progress)
+    return _transcribe(job, task, root, retry_failed=retry_failed, worker=worker, progress=progress)
 
 
-def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker) -> dict:
+def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker, progress=None) -> dict:
     version = version_for(task)
     output = root / "outputs" / job["id"] / version
     folder = root / ".cache" / job["id"] / version
@@ -257,6 +257,8 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
             response_path = folder / "responses" / (request_id + ".json")
             try:
                 if engine_for(task) == 'local':
+                    if progress:
+                        progress.current(job, index)
                     result = worker.recognize(folder / 'audio' / chunk['file'], folder, cfg, profile_for(task))
                 else:
                     result = asr.recognize(folder / "audio" / chunk["file"], auth, response_path,
@@ -347,6 +349,25 @@ def reanalyze(task_id: str, instruction: str, root: Path = ROOT) -> dict:
 def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_only: bool = False,
         saved_scope: bool = False) -> dict:
     task = load(task_id, root)
+    engine = config(root)['asr_engine'] if task.get('asr_pending') else engine_for(task)
+    options = dict(retry_evidence=retry_evidence, anonymous_only=anonymous_only, saved_scope=saved_scope)
+    if engine != 'local' or task.get('input_kind') == 'text':
+        return _run(task_id, root, **options)
+    try:
+        with background.task_lock(task_id, root):
+            registered = background.record(task_id, root)
+            if registered.get('background') and processes.alive(registered):
+                return background.status(task_id, root)
+            return _run(task_id, root, **options)
+    except ArtifactBusyError:
+        result = background.status(task_id, root)
+        result.setdefault('tell_user', '本任务已经在运行或准备中，未重复启动；可用 status 查看进度。')
+        return result
+
+
+def _run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_only: bool = False,
+         saved_scope: bool = False, _background: bool = False) -> dict:
+    task = load(task_id, root)
     if not task.get("purpose") or not task.get("evidence"):
         raise ValueError("先询问并确认本次用途；未下载、未调用豆包、未入库")
     if task.get('offline'):
@@ -368,11 +389,12 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
     for failure in task.get('failures', []):
         if failure.get('stage') in acquisition_stages and failure not in prior_gaps:
             prior_gaps.append(failure)
-    task.update(status="running", failures=[], acquisition_gaps=prior_gaps)
+    task.update(status="transcribing_in_background" if _background else "running", failures=[], acquisition_gaps=prior_gaps)
     run_started = time.monotonic()
     task['run_timing'] = {'started': now(), 'events': []}
     save(task, root)
     local_worker = None
+    local_progress = None
     model_wait = None
     try:
         if task.get("input_kind") == "text":
@@ -385,6 +407,8 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
         pin_asr(task, root)
         save(task, root)
         if engine_for(task) == 'local':
+            if not _background:
+                background.register_foreground(task_id, root)
             task.pop('model_status', None)
             task.pop('tell_user', None)
             local_worker = local_asr.Worker(task_path(task_id, root).parent / 'local-asr.log')
@@ -431,7 +455,7 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
                 if expected and Path(original_input).is_file() and digest(Path(original_input)) != expected:
                     if cached_result(job, task, root) is None:
                         raise ValueError('原本地素材已经变化，缺少旧版有效缓存；保留任务，请指定原素材或新建任务')
-                options = {'worker': local_worker} if local_worker is not None else {}
+                options = {'worker': local_worker, 'progress': local_progress} if local_worker is not None else {}
                 outcome = transcribe(job, task, root, retry_failed=bool(retry_evidence), **options)
                 if outcome['status'] == 'waiting_model':
                     model_wait = {key: outcome[key] for key in ('status', 'model_status', 'tell_user')}
@@ -461,8 +485,9 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
             # Persist identities before submitting anything paid. Resume can
             # find a completed/unknown receipt even after a process interruption.
             write_json(run_dir / 'jobs.json', jobs)
-            for job in ready_jobs:
-                recognize_ready(job)
+            if local_worker is None:
+                for job in ready_jobs:
+                    recognize_ready(job)
 
         if pending:
             try:
@@ -509,6 +534,14 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
             if not task['failures']:
                 raise ValueError("所选范围没有可处理的视频")
         write_json(task_path(task_id, root).parent / "jobs.json", jobs)
+        if local_worker is not None:
+            local_progress = background.prepare(task, jobs, root)
+            task['failures'].extend(local_progress.data['failures'])
+            attempted.update(failure['id'] for failure in local_progress.data['failures'])
+            local_worker.on_progress = local_progress.phase
+            if not _background and local_progress.data['estimated_seconds'] > local_progress.data['threshold_seconds']:
+                return background.start(task, root, local_progress, dict(retry_evidence=retry_evidence,
+                    anonymous_only=anonymous_only, saved_scope=saved_scope))
         for job in jobs:
             recognize_ready(job)
             if job['id'] in result_by_id:
@@ -539,6 +572,8 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
     finally:
         if local_worker is not None:
             local_worker.close()
+        if local_progress is not None and task['status'] != 'transcribing_in_background':
+            local_progress.finish()
     save(task, root)
     return task
 

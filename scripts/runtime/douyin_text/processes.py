@@ -14,6 +14,84 @@ from .common import read_json, write_json
 HIDDEN = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
 
+def _kernel():
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    for name, args, result in (
+        ('OpenProcess', [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+        ('GetProcessTimes', [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4, wintypes.BOOL),
+        ('WaitForSingleObject', [wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
+        ('TerminateProcess', [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
+        ('CloseHandle', [wintypes.HANDLE], wintypes.BOOL)):
+        method = getattr(api, name)
+        method.argtypes, method.restype = args, result
+    return api
+
+
+def _birth(api, handle) -> str | None:
+    if api.WaitForSingleObject(handle, 0) != 258:  # WAIT_TIMEOUT: still running
+        return None
+    times = [wintypes.FILETIME() for _ in range(4)]
+    if not api.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+        return None
+    return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+
+
+def _process_birth(pid: int) -> str | None:
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    if os.name == 'nt':
+        api = _kernel()
+        handle = api.OpenProcess(0x1000 | 0x100000, False, pid)
+        if not handle:
+            return None
+        try:
+            return _birth(api, handle)
+        finally:
+            api.CloseHandle(handle)
+    try:
+        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+        return fields[19] if fields[0] != 'Z' else None
+    except (OSError, IndexError):
+        return None
+
+
+def launch_background(command: list[str], **options):
+    """Start hidden and below-normal; caller records identity before sending the handshake."""
+    if os.name == 'nt':
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.BELOW_NORMAL_PRIORITY_CLASS
+        try:
+            return subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
+                                    **options), True
+        except OSError as exc:
+            if exc.winerror != 5:
+                raise
+            return subprocess.Popen(command, creationflags=flags, **options), False
+    return subprocess.Popen(command, start_new_session=True, **options), None
+
+
+def alive(record: dict) -> bool:
+    return bool(record.get('process_birth') and
+                _process_birth(record.get('pid', 0)) == record['process_birth'])
+
+
+def terminate_registered(record: dict, *, subject='后台识别', owner='本任务', hint='请重新查看 status',
+                         unsupported='后台取消仅支持 Windows。') -> None:
+    if os.name != 'nt':
+        raise RuntimeError(unsupported)
+    api = _kernel()
+    handle = api.OpenProcess(0x1000 | 0x100000 | 1, False, record['pid'])
+    if not handle:
+        raise RuntimeError('无法打开' + subject + '进程，' + hint)
+    try:
+        # Verify and terminate through one handle, never reopen a possibly reused PID.
+        if _birth(api, handle) != record['process_birth']:
+            raise RuntimeError('进程身份已变化，拒绝结束不属于' + owner + '的进程')
+        if not api.TerminateProcess(handle, 130) or api.WaitForSingleObject(handle, 5000) != 0:
+            raise RuntimeError(subject + '进程未能结束，' + hint)
+    finally:
+        api.CloseHandle(handle)
+
+
 class IO(ctypes.Structure):
     _fields_ = [(n, ctypes.c_ulonglong) for n in ('read', 'write', 'other', 'read_bytes', 'write_bytes', 'other_bytes')]
 

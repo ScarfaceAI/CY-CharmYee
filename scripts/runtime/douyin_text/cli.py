@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
-from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models
+from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -101,6 +101,8 @@ def parser() -> argparse.ArgumentParser:
     offline.add_argument('--instruction', required=True)
     for name in ("show", "preview"):
         sub.add_parser(name).add_argument("task")
+    for name, help_text in [('status', '查看本地识别进度与后台进程状态'), ('cancel', '取消本任务后台识别并保留成功分片')]:
+        sub.add_parser(name, help=help_text).add_argument('task')
     srt = sub.add_parser("export-srt", help="用已存的识别分句时间导出字幕，不调用识别")
     srt.add_argument("task")
     srt.add_argument("--reviewed", action="store_true", help="改用已登记的校对稿文字，沿用识别分句时间")
@@ -206,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
             result = workflow.reanalyze(args.task, args.instruction)
         elif args.command == "show":
             result = workflow.load(args.task)
+        elif args.command in {'status', 'cancel'}:
+            result = getattr(background, args.command)(args.task)
         elif args.command == "preview":
             result = {"sources": vault.publication_plan(workflow.load(args.task))}
         elif args.command == "export-srt":
