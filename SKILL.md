@@ -33,6 +33,7 @@ license: MIT
 | 口播改写、润色与压缩 | `cy-write`；[文稿改写](references/content-writing.md) |
 | 生活、工作、学习建库与访谈 | `cy-vault`；[个人知识库](references/personal-vault.md) |
 | 全文搜索转写稿、校对稿与知识页 | [本地搜索](references/search.md) |
+| 记决定、到期复盘、新决定查旧依据 | [决策记录](references/decisions.md) |
 | 明确要求或已开启范围内的归档／编译 | `cy-knowledge`；[知识库指南](references/knowledge.md)，遵循目标库规则 |
 | 旧任务、重复素材或旧稿修改 | [恢复与复用](references/continuation.md)，先只读 `resume` |
 | 跨功能／任务续办 | [组合任务](references/work.md)，关联真实产物；单步不强制建总记录 |

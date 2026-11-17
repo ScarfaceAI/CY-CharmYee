@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
 from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
-from . import quick, messages, selftest, search
+from . import quick, messages, selftest, search, decisions
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -57,6 +57,16 @@ def parser() -> argparse.ArgumentParser:
     personal_vault_cli.add_parser(sub)
     models.add_parser(sub)
     lexicon.add_parser(sub)
+    decide = sub.add_parser('decide', help='记录决定、复盘及查找相关资料')
+    decision_commands = decide.add_subparsers(dest='decide_command', required=True)
+    decision_commands.add_parser('new').add_argument('--file', type=Path, required=True)
+    decision_list = decision_commands.add_parser('list')
+    decision_list.add_argument('--due', action='store_true', help='只列到期未复盘的决定，仍列出待修正文件')
+    decision_list.add_argument('--domain', help='生活、工作、学习或 life、work、learning')
+    decision_review = decision_commands.add_parser('review')
+    decision_review.add_argument('decision', help='决定的 ID、库内路径或唯一标题')
+    decision_review.add_argument('--file', type=Path, required=True)
+    decision_commands.add_parser('related').add_argument('--query', required=True)
     find = sub.add_parser('search', help='搜索机器原稿、校对稿和已开启方向的知识库页面')
     find.add_argument('terms', nargs='+', help='多个词用空格分开，全部命中才返回')
     find.add_argument('--limit', type=int, default=10, help='结果条数，默认为 10，上限为 50')
@@ -169,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     command = values[0] if values else ''
     try:
         args = parser().parse_args(values)
-        if args.command in {'creator', 'kb'} and len(values) > 1:
+        if args.command in {'creator', 'kb', 'decide'} and len(values) > 1:
             command = ' '.join(values[:2])
         if args.command == 'models':
             result = models.dispatch(args)
@@ -177,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             result = lexicon.dispatch(args)
         elif args.command == 'kb':
             result = personal_vault_cli.dispatch(args)
+        elif args.command == 'decide':
+            result = decisions.dispatch(args, ROOT)
         elif args.command == 'search':
             result = search.query(' '.join(args.terms), root=ROOT, limit=args.limit,
                                   kind=args.kind, rebuild=args.rebuild)

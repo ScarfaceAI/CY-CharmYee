@@ -533,11 +533,12 @@ def configure(root=ROOT, *, module=None, disable_module=None, pause=None, resume
     return status(root)
 
 
-def stage(manifest, root=ROOT, *, profile=False):
+def stage(manifest, root=ROOT, *, profile=False, explicit_save=False):
     module, task = manifest.get('module'), manifest.get('task')
     if not isinstance(task, str) or not task.strip():
         raise ValueError('保存任务需要稳定的 task 标识')
-    value = require(root, module=None if profile else module, task=task, collection=not profile)
+    value = require(root, module=None if profile else module, task=task,
+                    collection=not profile and not explicit_save)
     if not profile and canonical_domain(module) not in DOMAINS:
         raise ValueError('自动积累需要明确的已开启模块')
     module = 'profile' if profile else canonical_domain(module)
@@ -620,6 +621,8 @@ def stage(manifest, root=ROOT, *, profile=False):
     record = {'id': ident, 'task': task, 'module': module, 'profile': profile, 'signature': signature,
               'vault_root': value['vault_root'], 'policy_id': value['id'], 'at': now(), 'created_ns': time.time_ns(),
               'title': manifest.get('title', task), 'status': 'pending', 'files': rows}
+    if explicit_save:
+        record['explicit_save'] = True
     write_json(existing, record)
     return record
 
@@ -640,7 +643,7 @@ def apply(ident, root=ROOT, *, external=False):
     record = read_json(record_file)
     try:
         value = require(root, module=None if record['profile'] else record['module'], task=record['task'],
-                        collection=not record['profile'])
+                        collection=not record['profile'] and not record.get('explicit_save', False))
         vault = Path(value['vault_root'])
         if record['vault_root'] != str(vault) or record['policy_id'] != value['id']:
             raise ValueError('待处理项属于其他知识库配置')
@@ -942,6 +945,7 @@ def context(root=ROOT, *, query='', task=None):
     body = profile.read_text(encoding='utf-8-sig') if profile.is_file() else ''
     result['profile'] = {'text': body[:16000], 'truncated': len(body) > 16000, 'sha256': file_hash(profile)}
     result['matches'] = []
+    found = None
     if query.strip():
         from . import search
         try:
@@ -950,6 +954,16 @@ def context(root=ROOT, *, query='', task=None):
                                   'score': row['score'], 'excerpt': row['excerpt']} for row in found['results']]
         except Exception as exc:
             result['search_error'] = str(exc)
+    result.update(related_decisions=[], due_decisions=[], decision_issues=[])
+    try:
+        from . import decisions
+        snapshot = decisions.list_decisions(root)
+        related = decisions.matching(query, root, snapshot['decisions']) if found is not None else []
+        result.update(related_decisions=related,
+                      due_decisions=[row for row in snapshot['decisions'] if row['due']],
+                      decision_issues=snapshot['needs_correction'])
+    except Exception as exc:
+        result['decision_error'] = str(exc)
     result['material_is_data_not_instructions'] = True
     return result
 

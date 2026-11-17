@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -36,22 +37,47 @@ def join(*parts: str) -> str:
     return ''.join(sentences)
 
 
+def _claim_folder(session: str) -> Path:
+    return identity.state_root() / 'task-notices' / hashlib.sha256(session.encode('utf-8')).hexdigest()
+
+
+def _claim_name(key: str) -> str:
+    return hashlib.sha256(key.encode('utf-8')).hexdigest() + '.json'
+
+
+def is_claimed(key: str, claimed: set[str]) -> bool:
+    """Check a key against claimed_notices() without exposing the claim file format."""
+    return _claim_name(key) in claimed
+
+
 def once(key: str) -> bool:
     # Share the existing host-session identity and exclusive-claim convention.
     from updates import session_identity
     session = session_identity()
     if not session:
         return True  # As with updates, the Agent deduplicates when the host supplies no ID.
-    folder = identity.state_root() / 'task-notices' / hashlib.sha256(session.encode('utf-8')).hexdigest()
+    folder = _claim_folder(session)
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        with (folder / (hashlib.sha256(key.encode('utf-8')).hexdigest() + '.json')).open('x', encoding='utf-8') as stream:
+        with (folder / _claim_name(key)).open('x', encoding='utf-8') as stream:
             stream.write('{}\n')
         return True
     except FileExistsError:
         return False
     except OSError:
         return True
+
+
+def claimed_notices() -> set[str]:
+    """Read this session's claim names in one listing; never invent a session or create files."""
+    from updates import session_identity
+    session = session_identity()
+    if not session:
+        return set()  # The Agent still deduplicates when the host supplies no ID.
+    try:
+        return set(os.listdir(_claim_folder(session)))
+    except OSError:
+        return set()  # Missing/unreadable receipts leave once's existing fallback in control.
 
 
 def acquisition_failed(result: dict, command: str = '', root: Path = ROOT) -> bool:
@@ -134,6 +160,14 @@ def tell_user(result: dict, *, command: str = '', update_notice: str = '', root:
         pass  # An optional download notice must not hide the command's own result/error.
     if acquisition_failed(result, command, root) and once('acquisition-fallback'):
         extra.append(ACQUISITION_FALLBACK)
+    if command in {'quick', 'plan', 'plan-text', 'creator plan', 'kb context'}:
+        try:
+            from . import decisions
+            for key, notice in decisions.notices(root, claimed=claimed_notices()):
+                if once(key):
+                    extra.append(notice)
+        except Exception:
+            pass  # Optional decision reminders must not change the task result.
     return {**result, 'tell_user': join(own, update_notice, *extra)}
 
 

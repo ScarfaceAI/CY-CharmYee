@@ -278,7 +278,7 @@ def _snippet(text, terms, *, highlight=True):
     return ('…' if start else '') + excerpt + ('…' if end < len(text) else '')
 
 
-def _matches(connection, terms, kind, limit, highlight, match_all=True):
+def _matches(connection, terms, kind, limit, highlight, match_all=True, files=None):
     engine = 'trigram' if all(len(term) >= 3 for term in terms) else 'scan'
     if engine == 'trigram':
         expression = (' AND ' if match_all else ' OR ').join('"' + term.replace('"', '""') + '"' for term in terms)
@@ -289,6 +289,8 @@ def _matches(connection, terms, kind, limit, highlight, match_all=True):
         rows = connection.execute('SELECT * FROM documents WHERE (? IS NULL OR kind = ?)', (kind, kind))
     ranked = []
     for row in rows:
+        if files is not None and row['file'] not in files:
+            continue
         counts = [row['searchable'].count(term) for term in terms]
         matched = sum(count > 0 for count in counts)
         if matched and (not match_all or matched == len(terms)):
@@ -307,7 +309,7 @@ def _matches(connection, terms, kind, limit, highlight, match_all=True):
     return engine, len(ranked), hits
 
 
-def query(text, root=ROOT, *, limit=10, kind=None, rebuild=False, highlight=True, match_all=True):
+def query(text, root=ROOT, *, limit=10, kind=None, rebuild=False, highlight=True, match_all=True, files=None):
     terms = list(dict.fromkeys(text.casefold().split()))
     if not terms:
         raise ValueError('请输入要搜索的词，多个词用空格分开')
@@ -340,7 +342,8 @@ def query(text, root=ROOT, *, limit=10, kind=None, rebuild=False, highlight=True
                         connection.execute('DELETE FROM documents WHERE kind = ?', (kind,))
                         connection.execute('DELETE FROM catalogs WHERE scope = ?', (kind,))
                     stats = _sync(connection, root, kind)
-                engine, total, hits = _matches(connection, terms, kind, limit, highlight, match_all)
+                engine, total, hits = _matches(connection, terms, kind, limit, highlight, match_all,
+                                             None if files is None else set(map(str, files)))
                 break
             except sqlite3.DatabaseError as exc:
                 code = getattr(exc, 'sqlite_errorcode', sqlite3.SQLITE_CORRUPT) & 255
