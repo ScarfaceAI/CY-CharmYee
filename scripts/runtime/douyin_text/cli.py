@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
 from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
-from . import quick, messages, selftest
+from . import quick, messages, selftest, search
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -57,6 +57,11 @@ def parser() -> argparse.ArgumentParser:
     personal_vault_cli.add_parser(sub)
     models.add_parser(sub)
     lexicon.add_parser(sub)
+    find = sub.add_parser('search', help='搜索机器原稿、校对稿和已开启方向的知识库页面')
+    find.add_argument('terms', nargs='+', help='多个词用空格分开，全部命中才返回')
+    find.add_argument('--limit', type=int, default=10, help='结果条数，默认为 10，上限为 50')
+    find.add_argument('--kind', choices=tuple(search.KINDS), help='只搜索指定类型')
+    find.add_argument('--rebuild', action='store_true', help='从当前文件重建本地搜索缓存')
     sub.add_parser("doctor")
     welcome = sub.add_parser('welcome', help='显示功能与首次使用引导，不调用语音识别')
     welcome.add_argument('--lang', choices=('zh', 'en'), default='zh')
@@ -172,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
             result = lexicon.dispatch(args)
         elif args.command == 'kb':
             result = personal_vault_cli.dispatch(args)
+        elif args.command == 'search':
+            result = search.query(' '.join(args.terms), root=ROOT, limit=args.limit,
+                                  kind=args.kind, rebuild=args.rebuild)
         elif args.command == 'resume':
             result = continuation.resume(task_id=args.task, inputs=args.input, purpose=args.purpose,
                                          instruction=args.instruction, request=args.request)

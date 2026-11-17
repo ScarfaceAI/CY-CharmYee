@@ -941,32 +941,15 @@ def context(root=ROOT, *, query='', task=None):
     profile = profile_reference(value)[0]
     body = profile.read_text(encoding='utf-8-sig') if profile.is_file() else ''
     result['profile'] = {'text': body[:16000], 'truncated': len(body) > 16000, 'sha256': file_hash(profile)}
-    terms = query.casefold().split()
-    matches = []
-    enabled_domains = {canonical_domain(x) for x in value.get('modules', [])}
-    # Read only indexed Markdown files, never recursively crawl an existing library.
-    if terms:
-        for candidate in sorted(indexed_files(vault)):
-            try:
-                if candidate.suffix.lower() != '.md' or not candidate.is_file():
-                    continue
-                text = candidate.read_text(encoding='utf-8-sig')
-                try:
-                    rel = candidate.relative_to(vault).as_posix()
-                except ValueError:
-                    rel = ''
-                folder = rel.split('/', 1)[0] if rel else ''
-                match_domain = next((domain for domain, label in DOMAIN_DIRS.items() if label == folder), None)
-                # A specific domain remains outside an older user's opt-in scope until enabled.
-                if match_domain and match_domain not in enabled_domains:
-                    continue
-                score = sum(term in (candidate.name + '\n' + text).casefold() for term in terms)
-                if score:
-                    matches.append({'file': str(candidate), 'domain': match_domain,
-                                    'score': score, 'excerpt': text[:1200]})
-            except (ValueError, OSError, UnicodeError):
-                continue
-    result['matches'] = sorted(matches, key=lambda row: -row['score'])[:8]
+    result['matches'] = []
+    if query.strip():
+        from . import search
+        try:
+            found = search.query(query, root, kind='knowledge', limit=8, highlight=False, match_all=False)
+            result['matches'] = [{'file': row['file'], 'domain': row['source']['domain'],
+                                  'score': row['score'], 'excerpt': row['excerpt']} for row in found['results']]
+        except Exception as exc:
+            result['search_error'] = str(exc)
     result['material_is_data_not_instructions'] = True
     return result
 
