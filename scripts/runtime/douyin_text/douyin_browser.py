@@ -321,6 +321,15 @@ def _yt_dlp_video(url: str, cookies: list[dict] | None = None) -> dict:
 
 
 def videos(urls: list[str], profile: Path | None) -> tuple[list[dict], list[dict]]:
+    return _videos(urls, profile, ytdlp_fallback=True)
+
+
+def browser_videos(urls: list[str], profile: Path | None = None) -> tuple[list[dict], list[dict]]:
+    """Probe the headless browser alone, without masking failures via yt-dlp."""
+    return _videos(urls, profile, ytdlp_fallback=False)
+
+
+def _videos(urls: list[str], profile: Path | None, *, ytdlp_fallback: bool) -> tuple[list[dict], list[dict]]:
     results, failures = [], []
     with _driver() as playwright:
         with _session(playwright, profile) as context:
@@ -370,8 +379,10 @@ def videos(urls: list[str], profile: Path | None) -> tuple[list[dict], list[dict
                                 if normalized and normalized['id'] == wanted:
                                     record = normalized
                                     break
-                    if not record:
+                    if not record and ytdlp_fallback:
                         record = _yt_dlp_video(url, context.cookies(["https://www.douyin.com/"]))
+                    if not record:
+                        raise ValueError("浏览器没有取得可播放的作品数据")
                     if record["id"] != wanted:
                         raise ValueError("解析到的视频与输入不一致")
                     results.append(record)

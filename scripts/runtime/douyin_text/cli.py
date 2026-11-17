@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
 from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
-from . import quick, messages
+from . import quick, messages, selftest
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -64,6 +64,10 @@ def parser() -> argparse.ArgumentParser:
     configure = sub.add_parser("configure", help="在本机安全填写豆包语音凭据")
     configure.add_argument("--legacy", action="store_true", help="旧控制台 APP ID + Access Token")
     sub.add_parser("login", help="打开项目专用抖音登录浏览器")
+    check = sub.add_parser('selftest', help='用本机样本分别探测 4 种获取方式，不调用识别')
+    sample = check.add_mutually_exclusive_group()
+    sample.add_argument('--sample', action='append', default=[], help='添加自己的公开作品链接，最多保存 2 条')
+    sample.add_argument('--clear-samples', action='store_true', help='清空本机自检样本，本次不探测')
     inspect = sub.add_parser("inspect-source", help="只检查单条视频链接或本地素材获取，不调用语音识别")
     inspect.add_argument("inputs", nargs="+")
     inspect.add_argument("--anonymous-only", action="store_true", help="不使用已保存的账号或浏览器状态")
@@ -186,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         elif args.command == "login":
             return media.douyin_browser.login(ROOT / ".local" / "douyin-profile")
+        elif args.command == 'selftest':
+            result = selftest.run(args.sample, clear=args.clear_samples, root=ROOT)
         elif args.command == "inspect-source":
             result = review.inspect_source(args.inputs, anonymous_only=args.anonymous_only, download_audio=args.download_audio)
         elif args.command == "prepare-review":

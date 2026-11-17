@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .common import ROOT, digest, inside, read_json, relative, write_json
-from . import acquisition, douyin_browser
+from . import acquisition, douyin_browser, selftest
 
 MEDIA_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus",
                   ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wma"}
@@ -70,13 +70,17 @@ def select_jobs(jobs: list[dict], scope: dict) -> list[dict]:
     return [job for job in ordered if scope["start"] <= job["published"][:10] <= scope["end"]]
 
 
-def metadata(urls: list[str], profile: Path, report: Path, *, anonymous_only=False) -> tuple[list[dict], list[dict]]:
+def metadata(urls: list[str], profile: Path, report: Path, *, anonymous_only=False,
+             root: Path = ROOT) -> tuple[list[dict], list[dict]]:
     result, attempts, diagnostics = [], [], []
     seen, pending = set(), list(urls)
-    routes = [('public_share', 'anonymous', None), ('playwright_with_ytdlp_fallback', 'anonymous', None)]
+    routes = {'public_share': ('public_share', 'anonymous', None),
+              'anonymous_browser': ('playwright_with_ytdlp_fallback', 'anonymous', None)}
     if not anonymous_only and profile.is_dir():
-        routes.append(('playwright_with_ytdlp_fallback', 'existing_profile', profile))
-    for backend, access, state in routes:
+        routes['existing_profile'] = ('playwright_with_ytdlp_fallback', 'existing_profile', profile)
+    ordered, adjustment = selftest.route_order(root, list(routes))
+    for route in ordered:
+        backend, access, state = routes[route]
         if not pending:
             break
         started = time.monotonic()
@@ -95,8 +99,11 @@ def metadata(urls: list[str], profile: Path, report: Path, *, anonymous_only=Fal
         pending = [url for url in pending if "douyin-" + acquisition.video_id(url) not in seen]
     unresolved = {acquisition.video_id(url) for url in pending}
     failures = [item for item in diagnostics if acquisition.video_id(item["input_url"]) in unresolved]
-    write_json(report, {"failures": failures, "attempt_failures": diagnostics, "attempts": attempts,
-                        "resolved": len(result), "anonymous_first": True, "anonymous_only": anonymous_only})
+    summary = {"failures": failures, "attempt_failures": diagnostics, "attempts": attempts,
+               "resolved": len(result), "anonymous_first": True, "anonymous_only": anonymous_only}
+    if adjustment:
+        summary['route_adjustment'] = adjustment
+    write_json(report, summary)
     return result, failures
 
 
@@ -147,7 +154,7 @@ def discover_one(value: str, scope: dict, run_dir: Path, root: Path, *, index=0,
             raise ValueError("链接不是可识别的视频或作者主页；图文、文章不送入语音转写")
         options = {"anonymous_only": True} if anonymous_only else {}
         jobs, failures = metadata([resolved], root / ".local" / "douyin-profile",
-                                  run_dir / f"metadata-{index}.json", **options)
+                                  run_dir / f"metadata-{index}.json", root=root, **options)
         if failures or not jobs:
             raise acquisition.AcquisitionError(failures)
     else:
