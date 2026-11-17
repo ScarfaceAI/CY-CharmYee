@@ -61,7 +61,7 @@ def restore_text_result(task: dict, root: Path = ROOT, item: dict | None = None)
         saved = read_json(folder / "result.json")
         if saved["text"] != text or any(digest(folder / ("transcript." + ext)) != saved["output_sha256"][ext] for ext in ("txt", "md")):
             raise ValueError("原始文稿缓存发生变化")
-        return {"id": media_id, "status": "imported", "result": relative(root, folder / "result.json"),
+        return {"id": media_id, "status": "imported", "reused": True, "result": relative(root, folder / "result.json"),
                 "markdown": relative(root, folder / "transcript.md"), "text": relative(root, folder / "transcript.txt")}
     result = {"created": task["created"], "engine": "provided-text", "parameters": {},
               "source": {"id": media_id, "title": Path(item["source"]).stem,

@@ -11,10 +11,14 @@ from runtime.douyin_text.identity import env_value, state_root
 
 
 def main() -> int:
-    selector = argparse.ArgumentParser(add_help=False)
+    selector = argparse.ArgumentParser(add_help=False, exit_on_error=False)
     selector.add_argument("--workspace", type=Path)
     selector.add_argument("--session-id", help="Actual host chat ID, for one update notice per conversation")
-    args, remaining = selector.parse_known_args()
+    try:
+        args, remaining = selector.parse_known_args()
+    except argparse.ArgumentError as exc:
+        from runtime.douyin_text.messages import UsageError
+        raise UsageError(str(exc)) from None
     workspace = args.workspace or env_value("WORKSPACE")
     if not workspace:
         settings = state_root() / "settings.json"
@@ -32,23 +36,20 @@ def main() -> int:
     links = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "Microsoft/WinGet/Links"
     os.environ["PATH"] = str(links) + os.pathsep + os.environ.get("PATH", "")
     sys.dont_write_bytecode = True
+    sys.path.insert(0, str(resource))
     if remaining and remaining[0] in {"check-update", "update"}:
-        from updates import apply_update, check_updates
-        update_parser = argparse.ArgumentParser(prog=remaining[0])
+        from runtime.douyin_text.messages import ArgumentParser, emit_json
+        from updates import apply_update, check_updates, notice_text
+        update_parser = ArgumentParser(prog=remaining[0])
         update_parser.add_argument("--force", action="store_true")
         if remaining[0] == "update":
             update_parser.add_argument("--apply", action="store_true")
         options = update_parser.parse_args(remaining[1:])
         apply = getattr(options, "apply", False)
         result = apply_update(skill_root, state_root(), workspace) if apply else check_updates(
-            skill_root, state_root(), force=options.force, notify=remaining[0] == "check-update")
-        print(json.dumps(result, ensure_ascii=False))
+            skill_root, state_root(), force=options.force, notify=True)
+        emit_json(result, command=remaining[0], update_notice=notice_text(result), root=workspace)
         return int(apply and result["status"] not in {"updated", "up_to_date"})
-    if remaining and (remaining[0] in {"plan", "plan-text"} or remaining[:2] in
-                      (['creator', 'plan'], ['kb', 'context'])):
-        from updates import notify_on_task
-        notify_on_task(skill_root, state_root())
-    sys.path.insert(0, str(resource))
     from douyin_text.cli import main as run
     return run(remaining)
 
@@ -56,6 +57,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, KeyError, OSError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
+    except (ValueError, RuntimeError, KeyError, OSError, argparse.ArgumentError) as exc:
+        from runtime.douyin_text.messages import emit_json, error_result
+        emit_json(error_result(exc))
         raise SystemExit(1)

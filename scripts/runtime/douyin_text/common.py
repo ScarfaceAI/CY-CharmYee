@@ -52,7 +52,21 @@ def now() -> str:
 
 
 def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    deadline, delay = None, 0.02
+    while True:
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except PermissionError:
+            if os.name != 'nt':
+                raise
+            current = time.monotonic()
+            if deadline is None:
+                deadline = current + 2.0
+            remaining = deadline - current
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, 0.25)
 
 
 def write_json(path: Path, value) -> None:

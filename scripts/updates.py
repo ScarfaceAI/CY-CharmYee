@@ -117,15 +117,20 @@ def check_updates(skill: Path, state: Path, *, force: bool = False, notify: bool
                 "error": cache.get("error") or str(exc), "cached": cached, "continue_current_task": True}
 
 
-def notify_on_task(skill: Path, state: Path) -> None:
+def notice_text(result: dict) -> str:
+    if result.get("should_notify"):
+        prefix = "上次检查确认承意有新版本" if result.get('stale') else "承意有新版本"
+        return (f"{prefix} {result['latest_version']}（当前 {result['current_version']}）。"
+                "需要更新时请说：@cy-charmyee 更新。当前任务可以继续。")
+    return ''
+
+
+def notify_on_task(skill: Path, state: Path) -> str:
     try:
         result = check_updates(skill, state, notify=True)
     except (ValueError, OSError):
-        return
-    if result.get("should_notify"):
-        prefix = "上次检查确认承意有新版本" if result.get('stale') else "承意有新版本"
-        print(f"{prefix} {result['latest_version']}（当前 {result['current_version']}）。"
-              "需要更新时请说：@cy-charmyee 更新。当前任务可以继续。", file=sys.stderr)
+        return ''
+    return notice_text(result)
 
 
 def run_installer(source: Path, skill: Path, state: Path, workspace: Path, log: Path) -> dict:

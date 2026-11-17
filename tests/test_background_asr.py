@@ -324,10 +324,14 @@ runpy.run_module('douyin_text.background', run_name='__main__')
             self.assertEqual('这是本地测试原文。\n' * 4, (self.root / state['results'][0]['text']).read_text(encoding='utf-8'))
         finally:
             run = background.record(task['id'], self.root)
-            if processes.alive(run):
-                processes.terminate_registered(run)
             for child in children:
-                child.wait(timeout=5)
+                try:
+                    # The finished worker may exit between alive() and termination.
+                    # Join its launcher first; only a stuck child needs cancellation.
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    processes.terminate_registered(run)
+                    child.wait(timeout=5)
 
     def test_status_preserves_background_failure_after_normal_exit(self):
         self.configure(asr_background_threshold_seconds=0)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.util
-import json
 import os
 import shutil
 import sys
@@ -11,6 +10,7 @@ from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
 from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
+from . import quick, messages
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -49,7 +49,7 @@ def doctor() -> dict:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="cy-charmyee：需求路由、原文留底、校对与口播、知识归档")
+    root = messages.ArgumentParser(description="cy-charmyee：需求路由、原文留底、校对与口播、知识归档")
     sub = root.add_subparsers(dest="command", required=True)
     creator_cli.add_parser(sub)
     work.add_parser(sub)
@@ -80,6 +80,9 @@ def parser() -> argparse.ArgumentParser:
     evidence.add_argument('--cached-only', action='store_true', help='只使用已有音画缓存；缺失时报告，不联网补取')
     plan = sub.add_parser("plan", help="创建待确认任务，不下载、不调用识别")
     plan.add_argument("inputs", nargs="+")
+    fast = sub.add_parser('quick', help='一条作品链接或一个本地文件直接出稿，沿用现有任务与缓存')
+    fast.add_argument('inputs', nargs='+')
+    fast.add_argument('--evidence', default='', help='用户原话；省略时记录 quick 默认用途说明')
     confirm = sub.add_parser("confirm", help="记录用户本次明确选择")
     confirm.add_argument("task")
     confirm.add_argument("--purpose", choices=workflow.PURPOSES, required=True)
@@ -153,8 +156,12 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    values = sys.argv[1:] if argv is None else argv
+    command = values[0] if values else ''
     try:
+        args = parser().parse_args(values)
+        if args.command in {'creator', 'kb'} and len(values) > 1:
+            command = ' '.join(values[:2])
         if args.command == 'models':
             result = models.dispatch(args)
         elif args.command == 'lexicon':
@@ -203,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
             result = content.record_publication(args.task, args.receipt)
         elif args.command == "plan":
             result = workflow.plan(args.inputs)
+        elif args.command == 'quick':
+            result = quick.run(args.inputs, args.evidence, root=ROOT)
         elif args.command == "confirm":
             scope = {key: value for key, value in {"all": args.all, "latest": args.latest,
                                                   "start": args.start, "end": args.end}.items() if value}
@@ -241,10 +250,10 @@ def main(argv: list[str] | None = None) -> int:
                      for file, target, checksum in zip(args.page, args.target, args.expected_sha256)]
             result = vault.publish(args.task, pages=pages)
         # Recorded file paths are workspace-relative; name the workspace so they can be opened.
-        result.setdefault("workspace", str(ROOT))
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1 if result.get("status") in {"incomplete", "failed", "publish_failed", "publication_unknown",
-                                            "environment_incomplete"} else 0
+        messages.emit_json(result, command=command, root=ROOT)
+        return int(result.get("status") in {"incomplete", "failed", "publish_failed", "publication_unknown",
+                                           "environment_incomplete"} or
+                   (args.command == 'quick' and result.get('status') in {'error', 'needs_scope'}))
     except (ValueError, RuntimeError, OSError, KeyError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
+        messages.emit_json(messages.error_result(exc, command), command=command, root=ROOT)
         return 1

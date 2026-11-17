@@ -20,10 +20,12 @@ license: MIT
 
 聊天先给实际成果及覆盖范围，再附文件：转写或改稿给正文或标明节选，分析给结论和例证，下载给成功／失败及画质，入库报告实际写入状态。缺失和未验证部分如实说明，详见[交付说明](references/onboarding.md#聊天先交付结果)。
 
+必做：命令返回的 `tell_user` 不为空时，把其中的话转告用户，不改意思、不省略。
+
 ## 首次介绍与维护
 
 - 首次安装前按[首次介绍](references/onboarding.md)在聊天中说明 9 组能力、例子、产出和何时需要语音配置；英文用 [onboarding.en.md](references/onboarding.en.md)。安装后首次使用运行 `welcome` 核对 `onboarding.due` 和本机状态，待介绍或用户要求时实际讲解，再用 `welcome --acknowledge` 登记。各入口共用状态；登记不代表用户理解、授权或真实云端验收。用户目标已明确时介绍后继续。
-- 新任务通过总入口的 `scripts/invoke.ps1 check-update` 检查版本，仅在 `should_notify=true` 时简短提示；检查不可用时继续不依赖检查的任务。用户明确要求更新本套件时，直接运行 `scripts/invoke.ps1 update --apply`；按结果报告失败或成功，并在成功后重读返回的新版入口。具体状态见[版本检查与升级](references/runtime.md#版本检查与升级)。
+- 用户明确要求更新本套件时，直接运行 `scripts/invoke.ps1 update --apply`；按结果报告失败或成功，并在成功后重读返回的新版入口。具体状态见[版本检查与升级](references/runtime.md#版本检查与升级)。
 - 安装、修复或迁移读 [INSTALL.md](INSTALL.md)；工作目录、知识库和凭据读[配置与迁移](references/setup.md)；豆包开通与排障读[语音配置教程](references/doubao-setup.md)。遵循用户指定路径，凭据只在本机配置。安装器与 `doctor` 的本地结果不等于真实语音、登录或宿主会话验收。
 
 ## 组合任务与续办

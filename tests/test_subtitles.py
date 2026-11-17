@@ -183,7 +183,8 @@ class ReviewedSubtitleTests(WorkspaceCase):
         process = subprocess.run(command, capture_output=True, timeout=120)
         self.assertEqual(0, process.returncode, process.stdout.decode("utf-8", "replace"))
         shown = json.loads(process.stdout.decode("utf-8"))
-        self.assertEqual({"files", "workspace"}, set(shown))
+        self.assertEqual({"files", "workspace", "tell_user"}, set(shown))
+        self.assertIsInstance(shown['tell_user'], str)
         self.assertEqual("transcript.srt", Path(shown["files"][0]).name)
 
 
