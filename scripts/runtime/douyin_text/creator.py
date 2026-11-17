@@ -47,7 +47,8 @@ def account_dir(task, root):
 
 def records(task, root):
     path = task_path(task['id'], root).parent / 'catalog.json'
-    return catalog.chronological(read_json(path).get('posts', [])) if path.is_file() else []
+    speech = task.get('speech_task', {})
+    return [dict(post, speech_task=speech) for post in catalog.chronological(read_json(path).get('posts', []))] if path.is_file() else []
 
 
 def book(task, root):
@@ -144,7 +145,8 @@ def plan(source, *, mode='analyze', quality=None, instruction=DEFAULT_INSTRUCTIO
             'instruction': instruction or DEFAULT_INSTRUCTION, 'analysis_schema': ANALYSIS_SCHEMA,
             'capabilities': {'images': bool(images), 'parallel_vision': bool(parallel_vision and images)},
             'status': 'needs_discovery', 'discovery': {'complete': False, 'pages': 0},
-            'items': {}, 'authorizations': [], 'timing': {}, 'report': None}
+            'items': {}, 'authorizations': [], 'timing': {}, 'report': None,
+            'speech_task': {'asr_pending': True}}
     if task['quality'] not in ('best', 'compact'):
         raise ValueError('quality must be best or compact')
     save(task, root)
@@ -225,7 +227,7 @@ def discover(task_id, *, anonymous_only=False, max_seconds=600, root=ROOT, scann
 
 
 def speech_task(post):
-    return {'revision': 'creator-' + post['media_fingerprint'][:16]}
+    return {**post.get('speech_task', {}), 'revision': 'creator-' + post['media_fingerprint'][:16]}
 
 
 def speech_job(post, asset=None):
@@ -290,7 +292,7 @@ def usage(task, root, *, price_per_hour=None, item_ids=None):
             seconds += remaining
         candidates.append({'id': post['id'], 'media_fingerprint': post['media_fingerprint'],
                            'estimated_audio_seconds': remaining, 'retry_required': retry_required})
-    quote_basis = {'items': candidates, 'asr_profile': asr.PROFILE, 'mode': task['mode'],
+    quote_basis = {'items': candidates, 'asr_profile': workflow.profile_for(task.get('speech_task', {})), 'mode': task['mode'],
                    'selected_ids': sorted(item_ids) if item_ids is not None else None}
     quote = {'token': catalog.fingerprint(quote_basis), **quote_basis,
              'new_or_remaining_items': len(candidates), 'reusable_items': len(reusable),
@@ -311,6 +313,9 @@ def usage(task, root, *, price_per_hour=None, item_ids=None):
 def preflight(task_id, *, price_per_hour=None, item_ids=None, root=ROOT):
     task = load(task_id, root)
     require_online_task(task)
+    if task.get('speech_task', {}).get('asr_pending'):
+        workflow.pin_asr(task['speech_task'], root)
+        save(task, root)
     quote = usage(task, root, price_per_hour=price_per_hour, item_ids=item_ids)
     write_json(task_path(task_id, root).parent / 'usage.json', quote)
     write_json(task_path(task_id, root).parent / 'usage' / (quote['token'] + '.json'), quote)
@@ -479,6 +484,7 @@ def run(task_id, *, download_workers=2, asr_workers=1, item_timeout=300, retry_e
     require_online_task(task)
     with artifact_lock(account_dir(task, root)):
         task = load(task_id, root)
+        workflow.pin_asr(task.get('speech_task', {}), root)
         posts = records(task, root)
         if not posts:
             raise ValueError('尚无作品清单，请先 discover；空列表不能证明主页已抓全')
@@ -552,7 +558,8 @@ def run(task_id, *, download_workers=2, asr_workers=1, item_timeout=300, retry_e
                 if cached:
                     item['speech'] = cached
                     item.pop('speech_error', None)
-                elif any(p.get('status') != 'succeeded' for p in prior_requests(post, root)) and not retry_evidence:
+                elif (workflow.engine_for(speech_task(post)) != 'local' and
+                      any(p.get('status') != 'succeeded' for p in prior_requests(post, root)) and not retry_evidence):
                     item['speech_error'] = '存在失败或结果未知的付费请求，需要核对并明确授权重试'
                 elif not task['capabilities']['images']:
                     item['speech'] = {'status': 'awaiting_visual_capability'}
@@ -616,7 +623,7 @@ def run(task_id, *, download_workers=2, asr_workers=1, item_timeout=300, retry_e
 
 def analysis_key(post, task):
     return catalog.fingerprint({'content': post['content_fingerprint'], 'instruction': task['instruction'],
-                                'asr': asr.PROFILE, 'schema': ANALYSIS_SCHEMA})
+                                'asr': workflow.profile_for(task.get('speech_task', {})), 'schema': ANALYSIS_SCHEMA})
 
 
 def analysis_record(item, post, task, root):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
 import json
 import os
@@ -17,6 +18,11 @@ def doctor() -> dict:
     checks = {name: bool(shutil.which(name)) for name in ("ffmpeg", "ffprobe")}
     checks["playwright"] = importlib.util.find_spec("playwright") is not None
     checks["yt_dlp"] = importlib.util.find_spec("yt_dlp") is not None
+    try:
+        importlib.import_module('sherpa_onnx')
+        checks['sherpa_onnx'] = True
+    except (ImportError, OSError):
+        checks['sherpa_onnx'] = False
     checks["chromium"] = bool(list((ROOT / ".local/browsers").glob("chromium-*/chrome-win*/chrome.exe")))
     local_models = models.status(cache=False)
     present = bool(os.environ.get("DOUBAO_ASR_API_KEY") or

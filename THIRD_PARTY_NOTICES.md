@@ -18,6 +18,16 @@ The MIT license at the repository root applies to this project's own code and do
 
 Exact Python package versions are pinned in `scripts/runtime/requirements.lock.txt`.
 
+## 本地识别运行依赖
+
+这些依赖由安装器按锁定版本单独安装，不将其二进制文件加入本项目安装 ZIP，也不适用本项目的 MIT 许可。
+
+| 组件 | 用途 | 许可与来源 |
+|---|---|---|
+| sherpa-onnx、sherpa-onnx-core | Qwen3-ASR 与 Silero VAD 的本地 CPU 推理 | [Apache-2.0](https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE)，[官方项目](https://github.com/k2-fsa/sherpa-onnx)；本步均锁定 2.0.1 |
+| onnxruntime | 随 sherpa-onnx-core 分发的 ONNX 推理运行库，不另装 Python onnxruntime 包 | [MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE)，[官方项目](https://github.com/microsoft/onnxruntime)；具体构建随锁定的 sherpa-onnx-core wheel |
+| numpy | WAV 样本、能量计算与切段 | [BSD-3-Clause](https://github.com/numpy/numpy/blob/main/LICENSE.txt)，[官方项目](https://numpy.org/)；本步锁定 2.5.5，wheel 中附带组件另按其随包许可处理 |
+
 ## Source history / 来源历史
 
 An earlier private, local-only workflow used two files from `a550752845-hue/douyin-video-transcript` at commit `692b064b50fe78f1194c6a243632a6b09e49d658`. That snapshot did not provide an explicit license. **Neither file is included in this public repository or its installation package.** The independently implemented adapter uses HTTP share pages and headless Playwright. The page loads its own visitor SDK at runtime, and the adapter sends an ordinary XHR from that page's context to retrieve post data; that SDK is not bundled by this project. The adapter contains no copy of a signature-generation algorithm, does not automatically solve CAPTCHA or use a third-party paid parsing service, and retains the separately installed yt-dlp fallback for individual videos. No upstream authorization is implied.

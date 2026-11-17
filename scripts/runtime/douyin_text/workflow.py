@@ -7,10 +7,11 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media
+from . import acquisition, asr, credentials, media, local_asr
 from .common import ROOT, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
+LEGACY_ASR_PROFILE = '0426d7a84e24'
 
 
 def task_path(task_id: str, root: Path = ROOT) -> Path:
@@ -69,7 +70,7 @@ def plan(values: list[str], root: Path = ROOT) -> dict:
     if not normalized:
         raise ValueError("输入为空")
     task = {"id": "dy-" + uuid.uuid4().hex[:16], "created": now(), "status": "needs_intent",
-            "inputs": normalized, "purpose": None, "results": [], "failures": [],
+            "inputs": normalized, "purpose": None, "results": [], "failures": [], "asr_pending": True,
             "question": "本次要做什么？只转写、总结／分析、原稿入库，还是入库并编译？",
             "choices": PURPOSES}
     task['input_fingerprints'] = {value: digest(Path(value)) for value in normalized
@@ -119,13 +120,36 @@ def render_markdown(result: dict) -> str:
              "- 来源：" + job["source"], "- 作者：" + job.get("author", "未指定"),
              "- 转写时间：" + result["created"], "- 服务：豆包录音文件识别极速版",
              "- 处理：保留口头语和重复表达；开启标点；关闭语义顺滑和数字规整"]
+    if result['engine'] == local_asr.ENGINE:
+        lines[-2:] = ['- 服务：本地 Qwen3-ASR（sherpa-onnx，CPU）',
+                      '- 处理：Silero VAD 断句；每段不超过 15 秒；保留模型原始文本']
     if job.get("published"):
         lines.append("- 视频发布时间：" + job["published"])
     return "\n".join(lines) + "\n\n## 逐字稿\n\n" + result["text"] + "\n"
 
 
+def engine_for(task: dict) -> str:
+    return task.get('asr_engine', 'doubao')
+
+
+def profile_for(task: dict) -> str:
+    return task.get('asr_profile') or LEGACY_ASR_PROFILE
+
+
+def pin_asr(task: dict, root: Path) -> None:
+    # Absence of the marker means a historical task, never a new default selection.
+    if not task.get('asr_pending'):
+        return
+    engine = config(root)['asr_engine']
+    if engine not in {'doubao', 'local'}:
+        raise ValueError('asr_engine 只能设为 doubao 或 local。')
+    task.update(asr_engine=engine, asr_profile=(local_asr.specification()['asr_profile']
+                                               if engine == 'local' else LEGACY_ASR_PROFILE))
+    task.pop('asr_pending', None)
+
+
 def version_for(task: dict) -> str:
-    return asr.PROFILE + ("-" + task["revision"] if task.get("revision") else "")
+    return profile_for(task) + ("-" + task["revision"] if task.get("revision") else "")
 
 
 def cached_result(job: dict, task: dict, root: Path) -> dict | None:
@@ -134,8 +158,15 @@ def cached_result(job: dict, task: dict, root: Path) -> dict | None:
     if not result_path.is_file():
         return None
     result = read_json(result_path)
-    if (result.get('engine') != 'doubao-auc-turbo' or result.get('parameters') != asr.PARAMETERS
-            or result.get('source', {}).get('id') != job['id']):
+    if engine_for(task) == 'local':
+        try:
+            valid = (result.get('engine') == local_asr.ENGINE and
+                     result.get('asr_profile') == profile_for(task) == local_asr.profile_for(result))
+        except (KeyError, TypeError):
+            valid = False
+    else:
+        valid = result.get('engine') == 'doubao-auc-turbo' and result.get('parameters') == asr.PARAMETERS
+    if not valid or result.get('source', {}).get('id') != job['id']:
         raise RuntimeError('已有识别缓存的来源或识别参数不一致，保留现场；重新识别须另存版本')
     for suffix in ('md', 'txt'):
         path = output / ('transcript.' + suffix)
@@ -175,7 +206,23 @@ def local_jobs(value: str, saved: list[dict], task: dict, root: Path) -> list[di
     return ready if len(ready) == len(matches) else []
 
 
-def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool = False) -> dict:
+def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool = False,
+               worker=None) -> dict:
+    pin_asr(task, root)
+    if engine_for(task) == 'local':
+        cached = cached_result(job, task, root)
+        if cached is not None:
+            return cached
+        waiting = local_asr.waiting_for_model()
+        if waiting:
+            return {'id': job['id'], **waiting}
+        if worker is None:
+            with local_asr.Worker(root / '.cache' / job['id'] / version_for(task) / 'local-asr.log') as owned:
+                return _transcribe(job, task, root, retry_failed=retry_failed, worker=owned)
+    return _transcribe(job, task, root, retry_failed=retry_failed, worker=worker)
+
+
+def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker) -> dict:
     version = version_for(task)
     output = root / "outputs" / job["id"] / version
     folder = root / ".cache" / job["id"] / version
@@ -200,17 +247,20 @@ def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool =
                     raise RuntimeError('已成功请求的音轨与当前分片不一致，保留现场；未重复提交')
                 recognized.append(prior["result"])
                 continue
-            if prior and not retry_failed:
+            if prior and not retry_failed and engine_for(task) != 'local':
                 raise RuntimeError("本媒体有失败或结果未知的请求。请先核对，再明确重试；已成功片段会复用")
-            auth = credentials.load(root)
+            auth = credentials.load(root) if engine_for(task) != 'local' else None
             request_id = str(uuid.uuid4())
             attempt = {"status": "submitting", "request_id": request_id, "created": now(),
                        "audio_sha256": chunk["sha256"], "audio_duration": chunk['duration']}
             write_json(chunk_path, attempt)
             response_path = folder / "responses" / (request_id + ".json")
             try:
-                result = asr.recognize(folder / "audio" / chunk["file"], auth, response_path,
-                                       timeout=cfg["asr_timeout_seconds"], request_id=request_id)
+                if engine_for(task) == 'local':
+                    result = worker.recognize(folder / 'audio' / chunk['file'], folder, cfg, profile_for(task))
+                else:
+                    result = asr.recognize(folder / "audio" / chunk["file"], auth, response_path,
+                                           timeout=cfg["asr_timeout_seconds"], request_id=request_id)
             except Exception as exc:
                 attempt["status"] = "outcome_unknown" if isinstance(exc, asr.OutcomeUnknown) else "failed"
                 attempt["error"] = str(exc)
@@ -228,7 +278,13 @@ def transcribe(job: dict, task: dict, root: Path = ROOT, *, retry_failed: bool =
         result = {"created": now(), "source": {key: value for key, value in job.items() if key != "media"},
                   "engine": "doubao-auc-turbo", "parameters": asr.PARAMETERS, "text": text,
                   "segments": segments, "duration": sum(chunk["duration"] for chunk in chunks),
-                  "request_ids": [item["request_id"] for item in recognized]}
+                  "request_ids": [item.get("request_id") for item in recognized]}
+        if engine_for(task) == 'local':
+            result.pop('request_ids')
+            result.update({key: recognized[0][key] for key in ('model', 'model_sha256', 'vad_sha256',
+                'parameters', 'asr_profile', 'sherpa_onnx_version', 'threads', 'hotwords')})
+            result.update(engine=local_asr.ENGINE, chunk_execution=[{key: item[key] for key in
+                ('threads', 'recognizer_threads', 'worker_pid', 'elapsed_seconds', 'sherpa_onnx_version')} for item in recognized])
         if binding:
             result['source_media_sha256'] = binding['source_sha256']
         output.mkdir(parents=True, exist_ok=True)
@@ -263,7 +319,8 @@ def reanalyze(task_id: str, instruction: str, root: Path = ROOT) -> dict:
     source = load(task_id, root)
     content.originals(source, root)
     task = {key: copy.deepcopy(source[key]) for key in
-            ('inputs', 'results', 'failures', 'input_kind', 'text_imports', 'input_fingerprints', 'category') if key in source}
+            ('inputs', 'results', 'failures', 'input_kind', 'text_imports', 'input_fingerprints', 'category',
+             'asr_engine', 'asr_profile', 'revision') if key in source}
     task.update(failures=coverage_gaps(source, root),
                 id='dy-' + uuid.uuid4().hex[:16], created=now(), purpose='analyze', evidence=instruction.strip(),
                 instruction=instruction.strip(), scope={}, offline=True, status='awaiting_review',
@@ -315,6 +372,8 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
     run_started = time.monotonic()
     task['run_timing'] = {'started': now(), 'events': []}
     save(task, root)
+    local_worker = None
+    model_wait = None
     try:
         if task.get("input_kind") == "text":
             from .content import restore_text_result
@@ -323,6 +382,12 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
             task["status"] = "awaiting_review"
             save(task, root)
             return task
+        pin_asr(task, root)
+        save(task, root)
+        if engine_for(task) == 'local':
+            task.pop('model_status', None)
+            task.pop('tell_user', None)
+            local_worker = local_asr.Worker(task_path(task_id, root).parent / 'local-asr.log')
         run_dir = task_path(task_id, root).parent
         saved = read_json(run_dir / 'jobs.json') if (run_dir / 'jobs.json').is_file() else []
         if saved_scope and not saved:
@@ -353,6 +418,7 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
         attempted = set()
 
         def recognize_ready(job):
+            nonlocal model_wait
             if job['id'] in attempted:
                 return
             attempted.add(job['id'])
@@ -365,9 +431,13 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
                 if expected and Path(original_input).is_file() and digest(Path(original_input)) != expected:
                     if cached_result(job, task, root) is None:
                         raise ValueError('原本地素材已经变化，缺少旧版有效缓存；保留任务，请指定原素材或新建任务')
-                result_by_id[job['id']] = {**transcribe(job, task, root, retry_failed=bool(retry_evidence)),
-                                            'number': job.get('number', job['input_number'])}
-                event['status'] = result_by_id[job['id']]['status']
+                options = {'worker': local_worker} if local_worker is not None else {}
+                outcome = transcribe(job, task, root, retry_failed=bool(retry_evidence), **options)
+                if outcome['status'] == 'waiting_model':
+                    model_wait = {key: outcome[key] for key in ('status', 'model_status', 'tell_user')}
+                else:
+                    result_by_id[job['id']] = {**outcome, 'number': job.get('number', job['input_number'])}
+                event['status'] = outcome['status']
             except Exception as exc:
                 task['failures'].append({'id': job['id'], 'input_number': job['input_number'],
                                         'number': job.get('number', job['input_number']), 'error': str(exc)})
@@ -448,7 +518,9 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
                     failure['number'] = job['number']
         task['results'] = sorted(result_by_id.values(), key=lambda x: x.get('number', 0))
         task['run_timing']['elapsed_seconds'] = round(time.monotonic() - run_started, 3)
-        if task["failures"]:
+        if model_wait:
+            task.update(model_wait)
+        elif task["failures"]:
             task["status"] = "incomplete" if task['results'] or jobs or any(
                 failure.get('stage') == 'cache' for failure in task['failures']) else 'failed'
         else:
@@ -464,6 +536,9 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
             failure["reports"] = [relative(root, path) for path in sorted(
                 task_path(task_id, root).parent.glob("metadata-*.json"))]
         task.update(status="incomplete" if task.get('results') else "failed", failures=[*task['failures'], failure])
+    finally:
+        if local_worker is not None:
+            local_worker.close()
     save(task, root)
     return task
 

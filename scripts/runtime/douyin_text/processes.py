@@ -85,10 +85,11 @@ class Job:
 
 class Worker:
     """Reusable child; stdin handshake prevents spawning before Job assignment."""
-    def __init__(self, log: Path, command: list[str] | None = None):
+    def __init__(self, log: Path, command: list[str] | None = None, *, low_priority: bool = False):
         self.log, self.command = log, command or [sys.executable, '-B', '-X', 'utf8', '-m', 'douyin_text.acquisition_worker']
         self.process = self.job = self.stream = None
         self.receipts = []
+        self.low_priority = low_priority
 
     def start(self):
         self.log.parent.mkdir(parents=True, exist_ok=True)
@@ -97,8 +98,9 @@ class Worker:
         env = {k: v for k, v in os.environ.items() if not k.startswith('DOUBAO_ASR_')}
         env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent)
         env['CY_UPDATE_CHECK'] = '0'
+        flags = HIDDEN | (subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == 'nt' and self.low_priority else 0)
         self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=self.stream,
-            stderr=subprocess.STDOUT, env=env, creationflags=HIDDEN, cwd=Path(__file__).resolve().parent.parent)
+            stderr=subprocess.STDOUT, env=env, creationflags=flags, cwd=Path(__file__).resolve().parent.parent)
         try:
             self.job.assign(self.process)
         except Exception:

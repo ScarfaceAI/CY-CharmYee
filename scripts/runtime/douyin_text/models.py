@@ -170,7 +170,7 @@ def _lock(model_id: str, folder: Path, *, wait_timeout: float = 0):
     """
     folder.parent.mkdir(parents=True, exist_ok=True)
     path = _path(folder.parent, '.' + model_id + '.lock')
-    with path.open('a+b') as handle:
+    with path.open('rb' if path.is_file() and path.stat().st_size else 'a+b') as handle:
         handle.seek(0, 2)
         if handle.tell() == 0:
             handle.write(b'0')
@@ -261,8 +261,8 @@ def status(model_id: str = DEFAULT_MODEL, *, cache: bool = True) -> dict:
             'interrupted': interrupted, 'progress': progress, 'last_error': progress.get('last_error'), 'hint': hint}
 
 
-def ready_paths(model_id: str = DEFAULT_MODEL) -> dict[str, str]:
-    result = status(model_id)
+def ready_paths(model_id: str = DEFAULT_MODEL, *, cache: bool = True) -> dict[str, str]:
+    result = status(model_id, cache=cache)
     if not result['ready'] or result['download_active']:
         raise ModelError(result['hint'])
     return {**{name: f['path'] for name, f in result['files'].items()}, 'silero_vad': result['silero_vad']['path']}

@@ -98,7 +98,7 @@ def document_summary(task, root):
             receipt = read_json(file)
             if receipt.get('status') != 'succeeded':
                 uncertain.append({'id': job['id'], 'status': receipt.get('status'), 'file': relative(root, file)})
-    if uncertain:
+    if uncertain and workflow.engine_for(task) != 'local':
         actions.append(_action('resolve_paid_requests', requests=uncertain, needs_user_decision=True,
                                note='核对失败或未知请求；此前授权不自动成为重试授权'))
     if jobs and not task.get('offline'):
@@ -146,7 +146,7 @@ def creator_summary(task, root):
         else:
             if awaiting:
                 actions.append(_action('preview_usage', item_ids=awaiting, needs_user_decision=True))
-            if unknown:
+            if unknown and workflow.engine_for(task.get('speech_task', {})) != 'local':
                 actions.append(_action('resolve_paid_requests', item_ids=unknown, needs_user_decision=True))
             if missing or task['mode'] == 'download' or state['counts']['speech_ready'] < len(posts):
                 actions.append(_action('run_native', command=['creator', 'run', task['id']],
