@@ -49,6 +49,36 @@ $dyRun = '<skill>\scripts\invoke.ps1'
 
 两种检查都不调用语音识别：不带 `--download-audio` 只检查元数据；加上该参数还会下载并验证音轨，但仍不代表云端识别成功。`--anonymous-only` 不使用已保存的账号或浏览器状态；去掉该参数才允许必要时尝试已有专用浏览器状态。依据输出及 `report_directory` 报告实际结果。此检查不用于证明作者主页分页完整。
 
+## 本地识别模型
+
+本步只管理模型文件，不执行识别，也不改变现有豆包识别流程。当前模型为 `qwen3-asr-0.6b-int8`，6 个推理文件合计 987,015,347 B，约 1 GB。Silero VAD 随安装包附带，不另行下载；运行时同样核对大小和 SHA-256。
+
+```powershell
+& $dyRun models status
+& $dyRun models download           # 后台下载，立即返回 JSON 状态
+& $dyRun models download --wait    # 前台等待下载与校验完成
+& $dyRun models cancel             # 只取消本模型的后台下载，保留部分文件
+& $dyRun models import 'D:\下载\sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2'
+& $dyRun models import 'D:\模型\sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25'
+& $dyRun models remove             # 删除当前模型缓存，需要时可重新下载
+```
+
+所有子命令可加 `--model qwen3-asr-0.6b-int8`，省略时使用这个唯一模型。输出中的 `ready` 表示模型和 Silero VAD 均已校验；`files` 列出各文件的存在情况、大小、哈希核验与缓存使用情况；`progress` 包含已下载量、总量、当前文件、来源、错误、起止记录及进程号。`hint` 给出中文下一步说明。`doctor` 也报告本地模型状态，只读检查，不触发下载。
+
+模型目录按以下顺序选择：
+
+1. 环境变量 `CY_MODEL_DIR`，兼容旧前缀 `DYB_MODEL_DIR`，前者优先。
+2. 共享状态目录中 `settings.json` 的 `model_dir` 字段。状态目录由 `CY_STATE_DIR`／`DYB_STATE_DIR` 或现有安装登记决定。
+3. 默认 `%LOCALAPPDATA%\cy-charmyee\models`，不随旧品牌状态目录改变。
+
+每个模型放在根目录内的同名子目录。临时改到其他磁盘可执行 `$env:CY_MODEL_DIR = 'D:\承意模型'`；长期使用可在共享设置中增加 `"model_dir": "D:\\承意模型"`，保留原有其他字段。换位置只改变后续查找位置，不自动搬走或删除旧缓存。核验结果记录文件大小、修改时间和哈希，大小与修改时间未变化时复用核验结果。
+
+逐文件依次尝试 ModelScope、hf-mirror、Hugging Face；连接失败、超时、长时间无有效进展或哈希不匹配时换源，并留下原因。逐文件来源均失败后，才使用 [sherpa-onnx 官方 GitHub 整包](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2)兜底。下载只补缺失或损坏的文件，写入 `.part`，支持 HTTP Range 续传；服务器不支持 Range 时从头下载该文件。大小和 SHA-256 都通过后才原子改名为可用文件。开始前检查剩余空间；不足时说明还差多少字节。
+
+后台下载以低优先级、无窗口方式运行。Windows 下会尝试脱离宿主作业对象；宿主不允许时，状态会说明后台可能随宿主结束，可改用 `--wait`。若进程已经退出而文件未完成，`status` 会提示再次运行 `download` 续传。`cancel` 核对进程号和创建时间后，只结束本模型登记的后台进程；前台下载用原终端的 `Ctrl+C` 中断。同一模型一次只允许一个下载或导入；进行中不能删除。
+
+无法联网时，可以手动从上面的 GitHub 链接取得整包再 `import`，也可以导入已包含清单中 6 个文件的模型目录。整包先核对整包 SHA-256，只提取清单文件，拒绝绝对路径、`..`、链接和特殊文件；所有推理文件逐个核验后才放入缓存。导入保留来源文件，不执行包内内容。`remove` 只删除所选模型子目录中的缓存和进度，不删除随安装包附带的 Silero VAD；删除前应确认这个缓存已不需要。
+
 ## 版本检查与升级
 
 ```powershell

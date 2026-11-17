@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
-from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles
+from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -18,6 +18,7 @@ def doctor() -> dict:
     checks["playwright"] = importlib.util.find_spec("playwright") is not None
     checks["yt_dlp"] = importlib.util.find_spec("yt_dlp") is not None
     checks["chromium"] = bool(list((ROOT / ".local/browsers").glob("chromium-*/chrome-win*/chrome.exe")))
+    local_models = models.status(cache=False)
     present = bool(os.environ.get("DOUBAO_ASR_API_KEY") or
                    (os.environ.get("DOUBAO_ASR_APP_ID") and os.environ.get("DOUBAO_ASR_ACCESS_KEY")) or
                    (ROOT / ".local/doubao.dpapi").is_file())
@@ -25,6 +26,7 @@ def doctor() -> dict:
     assistant = Path(cfg["assistant_root"]) if cfg.get("assistant_root") else None
     return {"status": "environment_ready" if all(checks.values()) else "environment_incomplete",
             "workspace": str(ROOT), "resource_root": str(RESOURCE_ROOT), "checks": checks,
+            "local_models": local_models,
             "doubao_credentials_present": present, "doubao_api_status": "not_checked_by_doctor",
             "login_status": "not_checked_by_doctor", "vault_root": cfg.get("vault_root"),
             "native_vault_entry_present": bool(assistant and (assistant / "scripts/vault.py").is_file()),
@@ -47,6 +49,7 @@ def parser() -> argparse.ArgumentParser:
     work.add_parser(sub)
     continuation.add_parser(sub)
     personal_vault_cli.add_parser(sub)
+    models.add_parser(sub)
     sub.add_parser("doctor")
     welcome = sub.add_parser('welcome', help='显示功能与首次使用引导，不调用语音识别')
     welcome.add_argument('--lang', choices=('zh', 'en'), default='zh')
@@ -138,7 +141,9 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        if args.command == 'kb':
+        if args.command == 'models':
+            result = models.dispatch(args)
+        elif args.command == 'kb':
             result = personal_vault_cli.dispatch(args)
         elif args.command == 'resume':
             result = continuation.resume(task_id=args.task, inputs=args.input, purpose=args.purpose,

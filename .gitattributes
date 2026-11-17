@@ -3,3 +3,4 @@
 *.jpg binary
 *.zip binary
 *.wav binary
+*.onnx binary

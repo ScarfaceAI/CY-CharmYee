@@ -48,7 +48,7 @@ def check(root: Path) -> list[str]:
                 errors.append(str(exc))
         if path.suffix == ".svg":
             ET.fromstring(data)
-        if path.suffix in {".png", ".jpg"}:
+        if path.suffix.lower() in {".png", ".jpg", ".onnx"}:
             continue
         text = data.decode("utf-8-sig")
         if re.search(r"(?:gh[pousr]_[A-Za-z0-9]{25,}|sk-[A-Za-z0-9]{30,})", text):

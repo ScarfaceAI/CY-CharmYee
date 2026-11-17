@@ -36,11 +36,14 @@ class PackageTests(unittest.TestCase):
     def test_migration_package_leaves_out_the_test_suite(self):
         with tempfile.TemporaryDirectory() as temp:
             copy = Path(temp) / "cy-charmyee"
-            shutil.copytree(SKILL_ROOT, copy, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(SKILL_ROOT, copy, ignore=shutil.ignore_patterns(".git", ".scratch", ".trash", "dist", "__pycache__"))
             result = load_packager().build(copy, Path(temp) / "exports", "9.9.9")
             with zipfile.ZipFile(result["zip"]) as archive:
                 names = archive.namelist()
                 manifest = json.loads(archive.read("cy-charmyee/bundle.json"))
+                self.assertEqual((SKILL_ROOT / 'assets/silero_vad.onnx').read_bytes(),
+                                 archive.read('cy-charmyee/assets/silero_vad.onnx'))
         self.assertIn("cy-charmyee/scripts/brain.py", names)
+        self.assertIn('assets/silero_vad.onnx', manifest['file_sha256'])
         self.assertFalse([name for name in names if name.startswith("cy-charmyee/tests/")])
         self.assertFalse([name for name in manifest["file_sha256"] if name.startswith("tests/")])
