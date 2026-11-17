@@ -74,7 +74,7 @@ def _write_access(value):
     return None
 
 
-def _sections(body):
+def _sections(body, *, strict=True):
     headings = list(re.finditer(r'^##[ \t]+([^\r\n]+)\r?\n', body, re.M))
     fields, spans = {}, {}
     for n, heading in enumerate(headings):
@@ -84,6 +84,8 @@ def _sections(body):
         if label not in FIELDS.values():
             continue
         if label in fields:
+            if not strict:
+                continue
             raise ValueError('栏目重复：' + label)
         end = headings[n + 1].start() if n + 1 < len(headings) else len(body)
         fields[label] = body[heading.end():end].strip()
@@ -94,9 +96,11 @@ def _sections(body):
 def _parse(data, file, vault, domain, *, required=False):
     body = data.decode('utf-8-sig')
     marker = re.search(r'^<!-- cy-decision: ([a-f0-9]{32}) -->\r?$', body, re.M)
-    fields, _ = _sections(body)
-    if not required and not marker and not set(FIELDS.values()).issubset(fields):
+    # Recognize a decision before checking it: ordinary notes may repeat headings such as 问题.
+    labels, _ = _sections(body, strict=False)
+    if not required and not marker and not set(FIELDS.values()).issubset(labels):
         return None
+    fields, _ = _sections(body)
     missing = [label for label in FIELDS.values() if not fields.get(label)]
     if missing:
         raise ValueError('缺少栏目或内容：' + '、'.join(missing))

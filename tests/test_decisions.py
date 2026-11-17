@@ -419,6 +419,23 @@ class DecisionTests(WorkspaceCase):
         self.assertEqual([], decisions.list_decisions(self.root)['decisions'])
         self.assertEqual([], decisions.list_decisions(self.root)['needs_correction'])
 
+    def test_repeated_headings_need_correction_only_in_decisions(self):
+        self.enable()
+        row = self.create()
+        note = self.vault / '工作/资料/周会记录.md'
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text('# 周会记录\n\n## 问题\n\n排期太紧。\n\n## 问题\n\n接口还没定。\n', encoding='utf-8')
+        with (self.vault / 'index.md').open('a', encoding='utf-8') as index:
+            index.write('\n[周会](<工作/资料/周会记录.md>)\n')
+        result = decisions.list_decisions(self.root)
+        self.assertEqual([row['id']], [item['id'] for item in result['decisions']])
+        self.assertEqual(([], ''), (result['needs_correction'], result['tell_user']))
+        file = Path(row['file'])
+        file.write_text(file.read_text(encoding='utf-8') + '\n## 问题\n\n又写了一遍问题。\n', encoding='utf-8')
+        issues = decisions.list_decisions(self.root)['needs_correction']
+        self.assertEqual([str(file)], [item['file'] for item in issues])
+        self.assertIn('栏目重复：问题', issues[0]['error'])
+
     def test_discovery_is_bounded_and_closed_domains_are_not_read(self):
         self.enable()
         row = self.create()

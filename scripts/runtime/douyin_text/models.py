@@ -454,8 +454,15 @@ def _run_download(model_id: str, spec: dict, folder: Path, progress: Progress) -
         raise ModelError(str(exc)) from exc
 
 
+def _worker_interpreter() -> str:
+    # The Windows venv python.exe redirects to a second PID, which would never match the PID
+    # registered here. Download workers use the standard library, so start the base interpreter.
+    return getattr(sys, '_base_executable', sys.executable) if os.name == 'nt' else sys.executable
+
+
 def _launch(model_id: str, folder: Path, progress: Progress, *, command: list[str] | None = None):
-    command = command or [sys.executable, '-B', '-X', 'utf8', '-m', 'douyin_text.models', model_id, progress.data['token']]
+    command = command or [_worker_interpreter(), '-B', '-X', 'utf8', '-m', 'douyin_text.models',
+                          model_id, progress.data['token']]
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent),
                CY_MODEL_DIR=str(folder.parent), CY_STATE_DIR=str(identity.state_root()), CY_UPDATE_CHECK='0')
     options = dict(stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -610,10 +617,7 @@ def ensure_data(folder: Path, files: list[dict]) -> dict:
             progress.update(data_files=files)
             try:
                 _space(folder, _remaining(folder, files))
-                # The Windows venv launcher redirects to a second PID. This data-only
-                # worker uses the standard library, so launch the base interpreter directly.
-                interpreter = getattr(sys, '_base_executable', sys.executable) if os.name == 'nt' else sys.executable
-                command = [interpreter, '-B', '-X', 'utf8', '-m', 'douyin_text.models',
+                command = [_worker_interpreter(), '-B', '-X', 'utf8', '-m', 'douyin_text.models',
                            '--data', str(folder), progress.data['token']]
                 child = _launch(folder.name, folder, progress, command=command)
             except (OSError, RuntimeError) as exc:

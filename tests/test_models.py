@@ -454,6 +454,21 @@ class ModelTests(unittest.TestCase):
         self.assertFalse(progress.data['job_breakaway'])
         self.assertIn('--wait', progress.data['background_warning'])
 
+    def test_background_download_registers_the_worker_not_a_venv_redirector(self):
+        # A Windows venv python.exe redirects to the base interpreter under a second PID, and the
+        # worker refuses to download unless the PID registered at launch is its own.
+        progress = models._progress(self.folder, self.spec, background=True)
+        commands = []
+        def launch(command, **options):
+            commands.append(command)
+            return SimpleNamespace(pid=os.getpid()), True
+        venv = SimpleNamespace(executable=str(self.base / 'venv/Scripts/python.exe'), _base_executable=sys.executable)
+        with patch.object(models, 'sys', venv), \
+                patch.object(models.processes, 'launch_background', side_effect=launch):
+            models._launch(models.DEFAULT_MODEL, self.folder, progress)
+        self.assertEqual(venv._base_executable if os.name == 'nt' else venv.executable, commands[0][0])
+        self.assertEqual(os.getpid(), progress.data['pid'])
+
     def test_cli_models_dispatch_and_model_option(self):
         for argv in (['models', '--model', models.DEFAULT_MODEL, 'status'],
                      ['models', 'status', '--model', models.DEFAULT_MODEL]):
