@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media, local_asr, background, processes
+from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers
 from .common import ROOT, ArtifactBusyError, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
@@ -123,6 +123,11 @@ def render_markdown(result: dict) -> str:
     if result['engine'] == local_asr.ENGINE:
         lines[-2:] = ['- 服务：本地 Qwen3-ASR（sherpa-onnx，CPU）',
                       '- 处理：Silero VAD 断句；每段不超过 15 秒；保留模型原始文本']
+        if 'display' in result:
+            display = result['display']
+            lines[-1] += ('；数字转换：' + ('开启' if display['number_conversion'] else '关闭') +
+                          '；中英文与数字间距：' + ('开启' if display['cjk_spacing'] else '关闭') +
+                          '；模型原文保存在 result.json。')
     if job.get("published"):
         lines.append("- 视频发布时间：" + job["published"])
     return "\n".join(lines) + "\n\n## 逐字稿\n\n" + result["text"] + "\n"
@@ -150,6 +155,91 @@ def pin_asr(task: dict, root: Path) -> None:
 
 def version_for(task: dict) -> str:
     return profile_for(task) + ("-" + task["revision"] if task.get("revision") else "")
+
+
+def display_options(cfg: dict, *, number_conversion=None, cjk_spacing=None) -> dict:
+    options = {'number_conversion': cfg['number_conversion'] if number_conversion is None else number_conversion,
+               'cjk_spacing': cfg['cjk_spacing'] if cjk_spacing is None else cjk_spacing}
+    for key, value in options.items():
+        if type(value) is not bool:
+            raise ValueError(f'{key} 必须是布尔值 true 或 false。')
+    return options
+
+
+def apply_display(result: dict, options: dict) -> None:
+    """Rebuild from segment RAW, retaining the original chunk separators verbatim."""
+    raw = result.get('raw_text', result['text'])
+    cursor, parts, records = 0, [], []
+    for index, segment in enumerate(result['segments'], 1):
+        original = segment.get('raw_text')
+        if not isinstance(original, str):
+            raise ValueError('本地结果缺少逐段模型原文，无法重算展示文字；已有文件未改动。')
+        start = raw.find(original, cursor)
+        if start < 0 or raw[cursor:start].strip():
+            raise ValueError('本地全文与逐段模型原文不一致，保留现场；未生成展示版本。')
+        segment['text'], changes = numbers.apply(original, **options)
+        parts.extend((raw[cursor:start], segment['text']))
+        records.append({'segment': index, 'raw_start': start, 'changes': changes})
+        cursor = start + len(original)
+    if raw[cursor:].strip():
+        raise ValueError('本地全文缺少对应的模型原文段落，保留现场；未生成展示版本。')
+    parts.append(raw[cursor:])
+    result.update(raw_text=raw, text=''.join(parts),
+                  display={**options, 'rules_version': numbers.RULES_VERSION, 'segments': records})
+
+
+def write_result(result: dict, output: Path, root: Path, *, status='transcribed') -> dict:
+    output.mkdir(parents=True, exist_ok=True)
+    (output / 'transcript.txt').write_text(result['text'] + '\n', encoding='utf-8')
+    (output / 'transcript.md').write_text(render_markdown(result), encoding='utf-8')
+    result['output_sha256'] = {suffix: digest(output / ('transcript.' + suffix)) for suffix in ('md', 'txt')}
+    write_json(output / 'result.json', result)
+    return {'id': result['source']['id'], 'status': status, 'result': relative(root, output / 'result.json'),
+            'markdown': relative(root, output / 'transcript.md'), 'text': relative(root, output / 'transcript.txt')}
+
+
+def redisplay(task_id: str, root: Path = ROOT, *, number_conversion=None, cjk_spacing=None) -> dict:
+    from . import content
+    task = load(task_id, root)
+    # No lock file, configuration migration or task write for ineligible tasks.
+    if not any(read_json(inside(root, item['result'])).get('engine') == local_asr.ENGINE
+               for item in task.get('results', [])) or task.get('input_kind') == 'text':
+        return {'status': 'no_local_result', 'id': task_id,
+                'tell_user': '任务里没有可用的本地识别结果，未改动任何文件。'}
+    with background.task_lock(task_id, root):
+        registered = background.record(task_id, root)
+        if registered.get('background') and processes.alive(registered):
+            raise ValueError('本任务仍在识别，请完成或取消后再重算展示文字。')
+        task = load(task_id, root)
+        originals = content.originals(task, root)
+        options = display_options(config(root), number_conversion=number_conversion, cjk_spacing=cjk_spacing)
+        revision = uuid.uuid4().hex[:12]
+        prepared = []
+        for item, original in zip(task['results'], originals):
+            if original['engine'] != local_asr.ENGINE:
+                continue
+            if original['asr_profile'] != profile_for(task) or local_asr.profile_for(original) != profile_for(task):
+                raise ValueError('本地结果的识别档案不一致，保留现场；未生成展示版本。')
+            result = copy.deepcopy(original)
+            apply_display(result, options)
+            result['created'] = now()
+            result['display']['source_result'] = {'file': item['result'], 'sha256': digest(inside(root, item['result']))}
+            output = root / 'outputs' / item['id'] / (profile_for(task) + '-' + revision)
+            if output.exists():
+                raise ValueError('展示版本目录已存在，保留现场；请重新运行 redisplay。')
+            prepared.append((item, result, output))
+        history = {key: copy.deepcopy(task[key]) for key in
+                   ('revision', 'results', 'status', 'delivery', 'analysis', 'archive', 'publication', 'completed') if key in task}
+        for item, result, output in prepared:
+            item.update(write_result(result, output, root, status='redisplayed'))
+        task.setdefault('display_history', []).append({**history, 'replaced_at': now()})
+        for key in ('delivery', 'analysis', 'archive', 'publication', 'completed'):
+            task.pop(key, None)
+        task.update(revision=revision, status='incomplete' if coverage_gaps(task, root) else 'awaiting_review',
+                    tell_user='已用模型原文另存新的展示版本，没有重新识别，旧版本文件保持不变。'
+                              '已登记校对稿仍保留；正文哈希变化的条目需要复核并重新登记，再导出校对字幕或交付。')
+        save(task, root)
+        return task
 
 
 def cached_result(job: dict, task: dict, root: Path) -> dict | None:
@@ -226,12 +316,12 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
     version = version_for(task)
     output = root / "outputs" / job["id"] / version
     folder = root / ".cache" / job["id"] / version
-    result_path = output / "result.json"
     with artifact_lock(folder):
         cached = cached_result(job, task, root)
         if cached is not None:
             return cached
         cfg = config(root)
+        display = display_options(cfg) if engine_for(task) == 'local' else None
         chunks = media.extract(job, folder / "audio", cfg["chunk_seconds"])
         audio_source = folder / 'audio/source.json'
         binding = read_json(audio_source) if audio_source.is_file() else None
@@ -287,15 +377,10 @@ def _transcribe(job: dict, task: dict, root: Path, *, retry_failed: bool, worker
                 'parameters', 'asr_profile', 'sherpa_onnx_version', 'threads', 'hotwords')})
             result.update(engine=local_asr.ENGINE, chunk_execution=[{key: item[key] for key in
                 ('threads', 'recognizer_threads', 'worker_pid', 'elapsed_seconds', 'sherpa_onnx_version')} for item in recognized])
+            apply_display(result, display)
         if binding:
             result['source_media_sha256'] = binding['source_sha256']
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "transcript.txt").write_text(text + "\n", encoding="utf-8")
-        (output / "transcript.md").write_text(render_markdown(result), encoding="utf-8")
-        result["output_sha256"] = {suffix: digest(output / ("transcript." + suffix)) for suffix in ("md", "txt")}
-        write_json(result_path, result)
-        return {"id": job["id"], "status": "transcribed", "result": relative(root, result_path),
-                "markdown": relative(root, output / "transcript.md"), "text": relative(root, output / "transcript.txt")}
+        return write_result(result, output, root)
 
 
 def coverage_gaps(task: dict, root: Path = ROOT) -> list[dict]:

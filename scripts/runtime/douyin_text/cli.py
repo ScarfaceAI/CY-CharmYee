@@ -99,6 +99,10 @@ def parser() -> argparse.ArgumentParser:
     offline = sub.add_parser('reanalyze', help='基于普通任务的已有文稿建立独立离线分析')
     offline.add_argument('task')
     offline.add_argument('--instruction', required=True)
+    redisplay = sub.add_parser('redisplay', help='用本地模型原文重算数字与间距，另存新版本')
+    redisplay.add_argument('task')
+    redisplay.add_argument('--numbers', choices=('on', 'off'), help='开启或关闭数字转换；省略时沿用当前配置')
+    redisplay.add_argument('--spacing', choices=('on', 'off'), help='开启或关闭间距；省略时沿用当前配置')
     for name in ("show", "preview"):
         sub.add_parser(name).add_argument("task")
     for name, help_text in [('status', '查看本地识别进度与后台进程状态'), ('cancel', '取消本任务后台识别并保留成功分片')]:
@@ -206,6 +210,10 @@ def main(argv: list[str] | None = None) -> int:
                                   saved_scope=args.saved_scope)
         elif args.command == 'reanalyze':
             result = workflow.reanalyze(args.task, args.instruction)
+        elif args.command == 'redisplay':
+            result = workflow.redisplay(args.task,
+                number_conversion=None if args.numbers is None else args.numbers == 'on',
+                cjk_spacing=None if args.spacing is None else args.spacing == 'on')
         elif args.command == "show":
             result = workflow.load(args.task)
         elif args.command in {'status', 'cancel'}:
