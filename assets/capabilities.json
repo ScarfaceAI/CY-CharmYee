@@ -1,8 +1,8 @@
 {
-  "revision": 5,
+  "revision": 6,
   "intro": {
-    "zh": "我是承意 CY-CharmYee。承你所想，会你所意。你可以让我处理视频和文稿，也可以通过持续对话建立生活、工作、学习知识库；开启后在日常相关任务中主动结合你的资料提供帮助。",
-    "en": "Meet CY-CharmYee: a personal knowledge and media creation assistant. Work with video and text, or build a life, work and learning knowledge base through ongoing conversation, then use its context proactively in relevant everyday tasks."
+    "zh": "我是承意 CY-CharmYee。承你所想，会你所意。我是在你电脑上运行的个人知识与决策伙伴：把你看到、听到、经历的变成资料，在知识库里积累并随时查找；做决定时调出相关依据，记下选择和理由，参与对话时在开头提醒到期复盘。",
+    "en": "Meet CY-CharmYee, your personal knowledge and decision companion running on your computer. Turn what you see, hear, and experience into sources, build a searchable knowledge base, then retrieve evidence for decisions, record your choices and reasons, and get due-review reminders at the start of conversations where the suite is in use."
   },
   "capabilities": [
     {
@@ -10,12 +10,12 @@
       "zh": {
         "title": "提取文字与校对",
         "example": "把这条视频转成文字，检查专名",
-        "outcome": "抖音、本地音视频或批量素材的逐字稿、校对稿与疑点；新增语音识别需要豆包配置"
+        "outcome": "抖音、本地音视频或批量素材的逐字稿、校对稿与疑点；默认用豆包识别，需配置语音凭据；本地识别须显式配置"
       },
       "en": {
         "title": "Transcribe and proofread",
         "example": "Transcribe this video and check names",
-        "outcome": "Raw and reviewed transcripts from Douyin, local media, or batches, with uncertainties; new speech recognition requires Doubao setup"
+        "outcome": "Raw and reviewed transcripts from Douyin, local media, or batches, with uncertainties; Doubao is the default and needs speech credentials; local recognition requires explicit configuration"
       }
     },
     {
@@ -94,6 +94,32 @@
         "title": "Personal knowledge and conversational profiles",
         "example": "Build my knowledge base, starting with the learning, work or life topic I care about most",
         "outcome": "Ongoing, resumable interviews and opted-in life, work and learning context; proactive relevant retrieval and outcome collection, with pause and no-save controls"
+      }
+    },
+    {
+      "id": "search",
+      "zh": {
+        "title": "全文搜索",
+        "example": "找找转写稿和知识库里提到换岗的资料，给我出处",
+        "outcome": "搜索转写稿、校对稿及已开启知识库索引中的页面和决策记录，按相关程度给出出处与片段；无需语音 Key"
+      },
+      "en": {
+        "title": "Full-text search",
+        "example": "Find sources about changing jobs in my transcripts and knowledge base, with references",
+        "outcome": "Search transcripts, reviewed text, and indexed pages and decisions in enabled knowledge domains; return ranked excerpts and sources without a speech key"
+      }
+    },
+    {
+      "id": "decisions",
+      "zh": {
+        "title": "决策记录与复盘",
+        "example": "记下这次决定、理由和预期，下个月复盘；先找找相关的旧记录",
+        "outcome": "在知识库中保存决定，承意参与对话时在开头提醒到期复盘，追加预期与实际的差异及改进；做新决定时调出相关旧决定和资料，不替你做决定"
+      },
+      "en": {
+        "title": "Decision records and reviews",
+        "example": "Record this decision, reasons, and expectations for review next month; first find related past records",
+        "outcome": "Save decisions in the knowledge base, surface due reviews at the start of conversations where the suite is in use, and append differences and improvements; retrieve past decisions and sources for new choices without deciding for you"
       }
     },
     {

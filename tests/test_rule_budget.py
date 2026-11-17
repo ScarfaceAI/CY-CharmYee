@@ -101,7 +101,7 @@ class RuleBudgetTests(unittest.TestCase):
     def test_relative_link_fragments_match_target_headings(self):
         paths = [ROOT / name for name in (
             "SKILL.md", "README.md", "INSTALL.md", "CONTRIBUTING.md",
-            "SOURCE_OF_TRUTH.md", "docs/RELEASING.md",
+            "SOURCE_OF_TRUTH.md", "docs/RELEASING.md", "docs/limits.md",
         )]
         paths += sorted((ROOT / "skills").glob("*/SKILL.md"))
         paths += sorted((ROOT / "references").glob("*.md"))

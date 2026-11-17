@@ -1,12 +1,12 @@
 ---
 name: cy-charmyee
-description: Route combined life, work, learning, personal-knowledge, Douyin, or audio/video requests, or configure, diagnose, migrate, and update the CY-CharmYee suite. Clear single-purpose requests use its specialized child Skills.
+description: Route personal knowledge, full-text search, decisions and reviews, life, work, learning, Douyin, or audio/video requests; configure, diagnose, migrate, and update CY-CharmYee. Clear single-purpose requests use its specialized child Skills.
 license: MIT
 ---
 
 # 承意 · CY-CharmYee
 
-承你所想，会你所意。Windows 本地个人知识库与媒体创作套件的总入口。
+在你电脑上运行的个人知识与决策伙伴：积累资料，随时查找，做决定时找依据，事后复盘。承你所想，会你所意。
 
 ## 必做项
 
