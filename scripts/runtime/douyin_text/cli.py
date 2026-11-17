@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
-from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background
+from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -56,6 +56,7 @@ def parser() -> argparse.ArgumentParser:
     continuation.add_parser(sub)
     personal_vault_cli.add_parser(sub)
     models.add_parser(sub)
+    lexicon.add_parser(sub)
     sub.add_parser("doctor")
     welcome = sub.add_parser('welcome', help='显示功能与首次使用引导，不调用语音识别')
     welcome.add_argument('--lang', choices=('zh', 'en'), default='zh')
@@ -155,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == 'models':
             result = models.dispatch(args)
+        elif args.command == 'lexicon':
+            result = lexicon.dispatch(args)
         elif args.command == 'kb':
             result = personal_vault_cli.dispatch(args)
         elif args.command == 'resume':

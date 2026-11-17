@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "id": "thuocl",
+  "repository": "https://github.com/thunlp/THUOCL",
+  "revision": "a30ce79d895d01ab5132a5c74c29703ff7efb4cc",
+  "license": "MIT",
+  "license_file": {
+    "path": "LICENSE",
+    "size": 1063,
+    "sha256": "db4b8cca414db4cf487b933d07a0514f77caf44f9f3d392f2bc9d7ba0d511c58",
+    "license": "MIT",
+    "sources": [
+      "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/LICENSE",
+      "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/LICENSE"
+    ]
+  },
+  "files": [
+    {
+      "path": "data/THUOCL_IT.txt",
+      "size": 308187,
+      "sha256": "e8cd42c9f5559735fa3bfb91515cbe051f991efd4a803038a1d5c0da85af3526",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_IT.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_IT.txt"
+      ],
+      "category": "IT",
+      "label": "信息技术",
+      "entries": 16000
+    },
+    {
+      "path": "data/THUOCL_animal.txt",
+      "size": 320553,
+      "sha256": "bcdc95a32fe713d4bc32957ae26174e3b464908e318e821c9abb295e90249145",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_animal.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_animal.txt"
+      ],
+      "category": "animal",
+      "label": "动物",
+      "entries": 17287
+    },
+    {
+      "path": "data/THUOCL_caijing.txt",
+      "size": 62296,
+      "sha256": "68e63d2009e59c6f388eeaa789d19b6a681657de3e8e56cc3479b21cd8548542",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_caijing.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_caijing.txt"
+      ],
+      "category": "caijing",
+      "label": "财经",
+      "entries": 3830
+    },
+    {
+      "path": "data/THUOCL_car.txt",
+      "size": 32492,
+      "sha256": "58ffd756b89e8574852bc72c254276a1d7fa8821342eb3cbf3be73ca33ab921c",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_car.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_car.txt"
+      ],
+      "category": "car",
+      "label": "汽车",
+      "entries": 1752
+    },
+    {
+      "path": "data/THUOCL_chengyu.txt",
+      "size": 166549,
+      "sha256": "c339d5d6e37d4f8ecdcb82f2a02b7fdfc66796f0a5215155f2aff8a77e89a7eb",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_chengyu.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_chengyu.txt"
+      ],
+      "category": "chengyu",
+      "label": "成语",
+      "entries": 8519
+    },
+    {
+      "path": "data/THUOCL_diming.txt",
+      "size": 640673,
+      "sha256": "ca5574399da5750a2c36dc373f36e31a66ed1f8a4b21646df6ca44ec0b888d89",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_diming.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_diming.txt"
+      ],
+      "category": "diming",
+      "label": "地名",
+      "entries": 44805
+    },
+    {
+      "path": "data/THUOCL_food.txt",
+      "size": 144749,
+      "sha256": "084caa96ad4f976720003e9420097ba7cb5ddbb17f9f8c8f76bc4b8e0cc777fd",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_food.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_food.txt"
+      ],
+      "category": "food",
+      "label": "饮食",
+      "entries": 8974
+    },
+    {
+      "path": "data/THUOCL_law.txt",
+      "size": 277745,
+      "sha256": "8ef1a5f41052ac95dedde88b167c5031a43b3e0211bf128b6125736cc76ef7b2",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_law.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_law.txt"
+      ],
+      "category": "law",
+      "label": "法律",
+      "entries": 9896
+    },
+    {
+      "path": "data/THUOCL_lishimingren.txt",
+      "size": 163136,
+      "sha256": "d0e5094016e6db8c55d363dc022f48f7b1753cf6d07e216f63cf522ce8e53605",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_lishimingren.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_lishimingren.txt"
+      ],
+      "category": "lishimingren",
+      "label": "历史名人",
+      "entries": 13658
+    },
+    {
+      "path": "data/THUOCL_medical.txt",
+      "size": 308805,
+      "sha256": "a01f39f1677af0b6a620bbc68bf293e8e436f06248b74adb625cd61d9ad7bbcd",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_medical.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_medical.txt"
+      ],
+      "category": "medical",
+      "label": "医学",
+      "entries": 18749
+    },
+    {
+      "path": "data/THUOCL_poem.txt",
+      "size": 294695,
+      "sha256": "f7045571f57114a3a70d2eaaeec8f991897d536be808f93161709f1289c8108c",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/thunlp/THUOCL/a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_poem.txt",
+        "https://cdn.jsdelivr.net/gh/thunlp/THUOCL@a30ce79d895d01ab5132a5c74c29703ff7efb4cc/data/THUOCL_poem.txt"
+      ],
+      "category": "poem",
+      "label": "诗词",
+      "entries": 13703
+    }
+  ]
+}

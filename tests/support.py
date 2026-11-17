@@ -21,7 +21,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(SKILL_ROOT / "scripts" / "runtime"))
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
-from douyin_text import asr, content, credentials, vault, workflow  # noqa: E402
+from douyin_text import asr, content, credentials, vault, workflow, lexicon  # noqa: E402
 from douyin_text.common import read_json, write_json  # noqa: E402
 
 
@@ -66,6 +66,12 @@ class WorkspaceCase(unittest.TestCase):
         self.parent = Path(self.temp.name).resolve()
         self.root = self.parent / "workspace"
         self.root.mkdir()
+        # Public lexicon acquisition is tested against a local server in test_lexicon.
+        # Other workflow fixtures must not start real downloads into the shared model store.
+        preparation = patch.object(lexicon, 'ensure_public', return_value={
+            'ready': False, 'status': 'downloading', 'tell_user': lexicon.DOWNLOADING})
+        preparation.start()
+        self.addCleanup(preparation.stop)
         self.wav = self.parent / "中文录音.wav"  # user media lives outside the workspace
         with wave.open(str(self.wav), "wb") as handle:
             handle.setparams((1, 2, 16000, 0, "NONE", "not compressed"))

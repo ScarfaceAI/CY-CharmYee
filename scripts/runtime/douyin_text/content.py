@@ -144,6 +144,13 @@ def register_content(task_id: str, files: list[Path], kind: str, root: Path = RO
                           "rewrite": "awaiting_edit", "ingest": "ready_for_ingest",
                           "compile": "awaiting_compile"}[task["purpose"]]
     workflow.save(task, root)
+    if kind == 'review':
+        from . import lexicon
+        try:
+            learned = lexicon.learn_registered(task, entries, root)
+            task['tell_user'] = learned['tell_user']
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+            task['tell_user'] = f'校对稿已登记成功；纠错记忆尚未写入：{exc}。可运行 lexicon learn 补建。'
     return task
 
 

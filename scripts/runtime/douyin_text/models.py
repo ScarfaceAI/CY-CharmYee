@@ -454,8 +454,8 @@ def _run_download(model_id: str, spec: dict, folder: Path, progress: Progress) -
         raise ModelError(str(exc)) from exc
 
 
-def _launch(model_id: str, folder: Path, progress: Progress):
-    command = [sys.executable, '-B', '-X', 'utf8', '-m', 'douyin_text.models', model_id, progress.data['token']]
+def _launch(model_id: str, folder: Path, progress: Progress, *, command: list[str] | None = None):
+    command = command or [sys.executable, '-B', '-X', 'utf8', '-m', 'douyin_text.models', model_id, progress.data['token']]
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent),
                CY_MODEL_DIR=str(folder.parent), CY_STATE_DIR=str(identity.state_root()), CY_UPDATE_CHECK='0')
     options = dict(stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -531,6 +531,109 @@ def import_model(source: str | Path, model_id: str = DEFAULT_MODEL) -> dict:
     return status(model_id)
 
 
+def data_status(folder: Path, files: list[dict]) -> dict:
+    """Read-only verification for small data bundles sharing the model store."""
+    verified = _read(folder, 'verification.json')
+    values = {f['path']: _verify(_path(folder, f['path']), f, verified) for f in files}
+    progress = _read(folder, 'progress.json')
+    active = progress.get('state') in ACTIVE and _alive(progress)
+    interrupted = progress.get('state') in ACTIVE and not active
+    ready = all(f['hash_ok'] for f in values.values())
+    state = ('ready' if ready else 'downloading' if active else 'failed'
+             if interrupted or progress.get('state') in {'failed', 'cancelled'} else 'unavailable')
+    return {'ready': ready, 'files': values, 'status': state, 'progress': progress, 'download_active': active}
+
+
+def acquire_data(folder: Path, files: list[dict], *, source: Path | None = None) -> dict:
+    """Explicit foreground download or staged directory import of a small data bundle."""
+    with _lock(folder.name, folder):
+        _idle(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        spec = {'files': files}
+        progress = _progress(folder, spec)
+        progress.update()
+        _run_data(folder, files, progress, source=source)
+    return {**data_status(folder, files), 'progress': progress.data}
+
+
+def _run_data(folder: Path, files: list[dict], progress: Progress, *, source: Path | None = None) -> None:
+    started = time.monotonic()
+    try:
+        if source is not None:
+            if not source.is_dir():
+                raise ModelError('请提供包含清单文件的词库文件夹。')
+            _import(source, folder, {'files': files}, progress, files)
+        else:
+            state = data_status(folder, files)
+            missing = [f for f in files if not state['files'][f['path']]['hash_ok']]
+            _space(folder, _remaining(folder, missing))
+            completed = sum(f['size'] for f in files if f not in missing)
+            for f in missing:
+                receipt = _fetch_sources(f, f['sources'], folder, progress, completed)
+                if receipt is None:
+                    raise ModelError('词库所有来源均失败，可重新运行 lexicon download 续传或使用 lexicon import-public 手动导入。')
+                target = _path(folder, f['path'])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _part(folder, f).replace(target)
+                completed += f['size']
+                progress.data['files'][f['path']] = receipt
+                progress.update(downloaded_bytes=completed)
+        verified = {}
+        for f in files:
+            check = _verify(_path(folder, f['path']), f, verified)
+            if not check['hash_ok']:
+                raise IntegrityError('词库校验失败：' + f['path'])
+        write_json(_path(folder, 'verification.json'), verified)
+        progress.update(state='ready', current_file=None, downloaded_bytes=progress.data['total_bytes'],
+                        elapsed_seconds=round(time.monotonic() - started, 3))
+    except KeyboardInterrupt:
+        progress.update(state='cancelled', last_error='词库下载已中断，可重新运行 lexicon download 续传。')
+        raise ModelError(progress.data['last_error']) from None
+    except (OSError, ValueError, RuntimeError) as exc:
+        progress.update(state='failed', last_error=str(exc))
+        raise ModelError(str(exc)) from exc
+
+
+def ensure_data(folder: Path, files: list[dict]) -> dict:
+    """Start once, without waiting for network; failed attempts require an explicit retry."""
+    result = data_status(folder, files)
+    if result['status'] != 'unavailable':
+        return result
+    child = None
+    try:
+        with _lock(folder.name, folder):
+            result = data_status(folder, files)
+            if result['status'] != 'unavailable':
+                return result
+            folder.mkdir(parents=True, exist_ok=True)
+            progress = _progress(folder, {'files': files}, background=True)
+            progress.update(data_files=files)
+            try:
+                _space(folder, _remaining(folder, files))
+                # The Windows venv launcher redirects to a second PID. This data-only
+                # worker uses the standard library, so launch the base interpreter directly.
+                interpreter = getattr(sys, '_base_executable', sys.executable) if os.name == 'nt' else sys.executable
+                command = [interpreter, '-B', '-X', 'utf8', '-m', 'douyin_text.models',
+                           '--data', str(folder), progress.data['token']]
+                child = _launch(folder.name, folder, progress, command=command)
+            except (OSError, RuntimeError) as exc:
+                progress.update(state='failed', last_error=str(exc))
+                return data_status(folder, files)
+    except ModelError:
+        # Another starter or foreground import owns the lock. Never wait on it in run.
+        result = data_status(folder, files)
+        return {**result, 'status': result['status'] if result['status'] != 'unavailable' else 'downloading'}
+    if child:
+        try:
+            child.stdin.write(b'go\n')
+            child.stdin.flush()
+        except OSError as exc:
+            progress.update(state='failed', last_error=str(exc))
+        finally:
+            child.stdin.close()
+    return data_status(folder, files)
+
+
 def cancel(model_id: str = DEFAULT_MODEL) -> dict:
     _, folder, _ = _model(model_id)
     progress = _read(folder, 'progress.json')
@@ -590,6 +693,16 @@ def dispatch(args) -> dict:
 
 
 def _worker() -> None:
+    if sys.argv[1:2] == ['--data']:
+        folder, token = Path(sys.argv[2]), sys.argv[3]
+        if sys.stdin.readline().strip() != 'go':
+            return
+        with _lock(folder.name, folder, wait_timeout=5):
+            progress = _read(folder, 'progress.json')
+            if progress.get('token') != token or progress.get('pid') != os.getpid() or not _alive(progress):
+                raise ModelError('后台词库下载身份不匹配')
+            _run_data(folder, progress['data_files'], Progress(folder, progress))
+        return
     model_id, token = sys.argv[1:]
     if sys.stdin.readline().strip() != 'go':
         return

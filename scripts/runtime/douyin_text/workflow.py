@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers
+from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers, lexicon
 from .common import ROOT, ArtifactBusyError, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
@@ -169,6 +169,7 @@ def display_options(cfg: dict, *, number_conversion=None, cjk_spacing=None) -> d
 def apply_display(result: dict, options: dict) -> None:
     """Rebuild from segment RAW, retaining the original chunk separators verbatim."""
     raw = result.get('raw_text', result['text'])
+    exceptions, vocabulary = lexicon.display_exceptions(raw, result.get('display', {}).get('lexicon_exceptions'))
     cursor, parts, records = 0, [], []
     for index, segment in enumerate(result['segments'], 1):
         original = segment.get('raw_text')
@@ -177,7 +178,7 @@ def apply_display(result: dict, options: dict) -> None:
         start = raw.find(original, cursor)
         if start < 0 or raw[cursor:start].strip():
             raise ValueError('本地全文与逐段模型原文不一致，保留现场；未生成展示版本。')
-        segment['text'], changes = numbers.apply(original, **options)
+        segment['text'], changes = numbers.apply(original, **options, extra_exceptions=exceptions)
         parts.extend((raw[cursor:start], segment['text']))
         records.append({'segment': index, 'raw_start': start, 'changes': changes})
         cursor = start + len(original)
@@ -185,7 +186,8 @@ def apply_display(result: dict, options: dict) -> None:
         raise ValueError('本地全文缺少对应的模型原文段落，保留现场；未生成展示版本。')
     parts.append(raw[cursor:])
     result.update(raw_text=raw, text=''.join(parts),
-                  display={**options, 'rules_version': numbers.RULES_VERSION, 'segments': records})
+                  display={**options, 'rules_version': numbers.RULES_VERSION, 'segments': records,
+                           'lexicon_exceptions': vocabulary})
 
 
 def write_result(result: dict, output: Path, root: Path, *, status='transcribed') -> dict:
@@ -194,7 +196,9 @@ def write_result(result: dict, output: Path, root: Path, *, status='transcribed'
     (output / 'transcript.md').write_text(render_markdown(result), encoding='utf-8')
     result['output_sha256'] = {suffix: digest(output / ('transcript.' + suffix)) for suffix in ('md', 'txt')}
     write_json(output / 'result.json', result)
-    return {'id': result['source']['id'], 'status': status, 'result': relative(root, output / 'result.json'),
+    notice = lexicon.display_notice(result)
+    return {**({'tell_user': notice} if notice else {}),
+            'id': result['source']['id'], 'status': status, 'result': relative(root, output / 'result.json'),
             'markdown': relative(root, output / 'transcript.md'), 'text': relative(root, output / 'transcript.txt')}
 
 
@@ -238,6 +242,8 @@ def redisplay(task_id: str, root: Path = ROOT, *, number_conversion=None, cjk_sp
         task.update(revision=revision, status='incomplete' if coverage_gaps(task, root) else 'awaiting_review',
                     tell_user='已用模型原文另存新的展示版本，没有重新识别，旧版本文件保持不变。'
                               '已登记校对稿仍保留；正文哈希变化的条目需要复核并重新登记，再导出校对字幕或交付。')
+        notices = {notice for _, result, _ in prepared if (notice := lexicon.display_notice(result))}
+        task['tell_user'] += ''.join(sorted(notices))
         save(task, root)
         return task
 
@@ -262,7 +268,9 @@ def cached_result(job: dict, task: dict, root: Path) -> dict | None:
         path = output / ('transcript.' + suffix)
         if not path.is_file() or digest(path) != result.get('output_sha256', {}).get(suffix):
             raise RuntimeError('已有原稿被修改，保留现场；请明确要求重新转写以另存新版本')
-    return {'id': job['id'], 'status': 'reused', 'result': relative(root, result_path),
+    notice = lexicon.display_notice(result)
+    return {**({'tell_user': notice} if notice else {}),
+            'id': job['id'], 'status': 'reused', 'result': relative(root, result_path),
             'markdown': relative(root, output / 'transcript.md'), 'text': relative(root, output / 'transcript.txt')}
 
 
@@ -546,6 +554,8 @@ def _run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous
                     model_wait = {key: outcome[key] for key in ('status', 'model_status', 'tell_user')}
                 else:
                     result_by_id[job['id']] = {**outcome, 'number': job.get('number', job['input_number'])}
+                    if outcome.get('tell_user'):
+                        task['tell_user'] = outcome['tell_user']
                 event['status'] = outcome['status']
             except Exception as exc:
                 task['failures'].append({'id': job['id'], 'input_number': job['input_number'],
