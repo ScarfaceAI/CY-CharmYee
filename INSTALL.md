@@ -1,10 +1,10 @@
 # 安装承意：给用户和 Agent
 
-承意 CY-CharmYee 在 Windows 本机运行。可以使用 [GitHub 仓库](https://github.com/ScarfaceAI/CY-CharmYee)的源码或正式 Release 安装 ZIP。用户不需要预先安装 Python；安装器会尝试准备运行环境。语音识别使用用户自己的豆包语音服务，开通和计费以服务页面为准。
+承意 CY-CharmYee 在 Windows 本机运行。可以使用 [GitHub 仓库](https://github.com/ScarfaceAI/CY-CharmYee)的源码或正式 Release 安装 ZIP。用户不需要预先安装 Python；安装器会尝试准备运行环境。当前默认使用用户自己的豆包语音服务识别音频；只有显式将 `asr_engine` 配置为 `local` 才使用本地识别，[本地识别配置方法见此](references/local-asr.md#本地识别引擎)。豆包开通和计费以服务页面为准。
 
 1.6.0 起使用承意品牌，安装包名为 `cy-charmyee-windows-v<版本>.zip`，包内根目录及 `bundle.json` 的 `name` 均为 `cy-charmyee`。旧 v1.5.0 资产 `dyb-douyinbrain-windows-v1.5.0.zip` 保留原名；首次跨品牌迁移需运行新安装器，不能通过旧更新器直接安装新品牌包。详见[品牌迁移](references/brand-migration.md)和 [1.6.0 版本说明](docs/releases/v1.6.0.md)。
 
-本版新增可选个人知识库，并统一品牌与入口；首次介绍、主页分析、独立下载和既有媒体流程继续保留。
+套件可以处理资料、建立知识库、全文搜索、记录决定与复盘；既有媒体流程继续保留。
 
 首次安装时，Agent 会先在聊天里介绍能做什么、例子、交付物以及什么时候需要豆包语音，再根据你的目标补必要配置。完整说明见[首次介绍与自然语言路由](references/onboarding.md)；你只需说想处理什么，不需要记命令。
 
@@ -24,10 +24,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\install.ps1'
 
 套件一次安装总入口和六个子 Skill：源码及安装包将子 Skill 放在 `skills/`；安装后六个子 Skill 与总入口是同级独立目录，总入口内不保留嵌套的子入口，避免递归发现时重复显示。共用清单核对各入口的一致性。它们共用一套工作目录、配置与更新，不需逐个安装或配置；实际安装结果和自动发现情况须按本机及宿主验证。[套件说明](references/suite.md)列出名称和路由，单个子入口通过自己的 `guide` 定位共用运行时。
 
-默认 `-Agent auto` 安装到当前用户的 `.agents/skills/cy-charmyee`，检测到已有 Claude 配置时尝试建立对应桥接；已有同名独立安装会保留。已指定使用某个 Agent 时可显式选择；所有入口使用相同的核心引擎：
+## Agent 兼容分级
+
+**一级：Claude Code、Codex。** 发布前在这两个 Agent 中做真实对话验收；本版本的真实会话验收尚未做。
+
+**安装适配，社区支持：DeepSeek Harness、Gemini CLI、Cursor、OpenCode。** 能安装并共用同一套核心，不保证逐一验证。
+
+默认 `-Agent auto` 安装到当前用户的 `.agents/skills/cy-charmyee`，检测到已有 Claude 配置时尝试建立对应桥接；已有同名独立安装会保留。所有入口使用相同的核心引擎。安装器的 `-Agent` 参数为 `auto`、`shared`、`deepseek`、`codex`、`claude`、`gemini`、`cursor`、`opencode`、`all` 或 `custom`：
 
 ```powershell
-# 可选：shared、deepseek、codex、claude、gemini、cursor、opencode、all 或 custom
+# 示例：显式安装到 Codex
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\install.ps1' -Agent codex
 
 # 指定 Skill 的父目录；此参数覆盖默认位置
@@ -41,7 +47,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\install.ps1' 
 1. 从 [Release 页面](https://github.com/ScarfaceAI/CY-CharmYee/releases/latest)下载 `cy-charmyee-windows-v<版本>.zip` 及 `.zip.sha256`，核验 SHA-256 后解压，或者打开仓库源码根目录。
 2. 双击 `install.cmd`，由安装器自动准备 Python、依赖、FFmpeg 和浏览器运行环境，并设置本机工作目录。网络、权限或系统环境阻断时按实际错误修复。
 3. 按安装结果找到 Skill，交给 Agent；如当前 Agent 不自动发现，直接让它读取安装后的 `SKILL.md`，并请它在聊天中介绍功能。
-4. 需要转写时再配置豆包语音；默认安装不弹 Key 窗口，现有文稿和主页视频下载无需 Key。可选 cy-vault 建立个人知识库，也可在明确需要入库时再配置。
+4. 使用默认豆包识别时，需要配置豆包语音；默认安装不弹 Key 窗口，现有文稿和主页视频下载无需 Key。只有显式把 `asr_engine` 配置为 `local` 才走本地识别，配置方法见[本地识别引擎](references/local-asr.md#本地识别引擎)。可选 cy-vault 建立个人知识库，也可在明确需要入库时再配置。
 
 首次申请或配置 Key，见[豆包语音配置教程](references/doubao-setup.md)。安装不要求先登录抖音，也不会替用户购买资源、自动录音或发送付费语音请求。豆包账号登录、服务开通／计费确认及验证码由用户处理。
 
@@ -77,7 +83,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\install.ps1' 
 | 状态 | 含义与处理 |
 |---|---|
 | `installed` | 本地安装与凭据存在性检查完成；不代表云端语音权限已验证。 |
-| `awaiting_api` | 本地安装已推进但尚未保存语音凭据；可继续处理已有文字稿和下载主页视频，配置 Key 后再做媒体转写。 |
+| `awaiting_api` | 本地安装已推进但尚未保存语音凭据；可继续处理已有文字稿和下载主页视频。使用默认豆包识别前需配置 Key；显式配置本地识别时不需要豆包 Key。 |
 | `needs_workspace_choice` | 发现多个不同的工作目录；让用户选择候选路径，用 `-Workspace` 重新运行。 |
 | `dependencies_pending` | 跳过依赖的隔离测试状态，不能当作完整环境已就绪。 |
 | `failed` | 根据 `stage` 和错误处理实际缺项，再核对结果。 |

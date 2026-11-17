@@ -1,7 +1,5 @@
 # 维护与发布
 
-[English](releasing.en.md)
-
 本指南面向维护承意的人，也包含[已有用户升级](#已有用户如何升级)的步骤。公开仓库是发布源码的真源；安装后的 Skill 副本用于运行。
 
 ## 先分清修改与发布
@@ -24,7 +22,7 @@
 需要发布时，在 PR 中一起更新：
 
 - `VERSION`：按[语义化版本](https://semver.org/lang/zh-CN/)选择版本。兼容修复增加 PATCH，向后兼容的新增功能增加 MINOR，不兼容变更加 MAJOR。安装参数、数据格式和已承诺的能力契约也按兼容性判断。
-- `CHANGELOG.md` 和 `docs/releases/vX.Y.Z.md`：说明改动、已有用户需要注意的内容、实际验证及未验证场景；Release 说明包含中英文。
+- `CHANGELOG.md` 和 `docs/releases/vX.Y.Z.md`：说明改动、已有用户需要注意的内容、实际验证及未验证场景；以后的发布说明只写中文，历史发布说明不动。
 - `bundle.json`：所有打包文件定稿后运行 `python -B -X utf8 scripts/package.py --manifest-only` 同步清单。
 
 按改动运行适当测试，并确认发布说明中的验证结果有证据；未测试的真实语音请求、主页完整分页或 Agent 会话不要写成已通过。检查和清单更新完成后再走 PR，避免合并后才补发布必需文件。
@@ -44,7 +42,7 @@ git pull --ff-only origin main
 python -B -X utf8 scripts/release.py
 ```
 
-默认只做预检，不创建发布标签。脚本检查工作树和分支、`VERSION`、更新记录、对应的中英文 Release 说明、安装包清单、远端当前 `main` 提交的 `check.yml` push CI，以及版本是否高于历史正式标签。预检失败先处理具体问题，不丢弃已有改动。
+默认只做预检，不创建发布标签。脚本检查工作树和分支、`VERSION`、更新记录、对应版本的发布说明存在且有正文、安装包清单、远端当前 `main` 提交的 `check.yml` push CI，以及版本是否高于历史正式标签；以后的发布说明只写中文。预检失败先处理具体问题，不丢弃已有改动。
 
 用户已明确要求发布时，运行：
 

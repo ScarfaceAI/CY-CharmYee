@@ -22,6 +22,11 @@ def add_parser(sub):
     enable.add_argument('--evidence', required=True)
     enable.add_argument('--focus', '--selected', choices=kb.LEGACY_MODULES, default='life')
     enable.add_argument('--all-domains', action='store_true', help='明确授权已有工作区开启全部方向')
+    profile = commands.add_parser('profile', help='登记、更换或取消只读外部画像')
+    selection = profile.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--external', type=Path, help='知识库和工作区外的已有画像文件')
+    selection.add_argument('--none', action='store_true', help='取消外部画像引用，恢复库内档案')
+    profile.add_argument('--evidence', required=True, help='用户实际原话')
     module = commands.add_parser('module')
     module.add_argument('module', choices=kb.LEGACY_MODULES)
     module.add_argument('--evidence', default='')
@@ -77,6 +82,8 @@ def dispatch(args, root=ROOT):
             return kb.enable(root, vault=args.vault, create=args.create, scope=args.scope, host=args.host,
                              entry=args.entry_file, profile=args.profile_entry, evidence=args.evidence,
                              focus=args.focus, all_domains=args.all_domains)
+        if action == 'profile':
+            return kb.configure_profile(root, external=args.external, none=args.none, evidence=args.evidence)
         if action == 'module':
             if args.off:
                 return kb.configure(root, disable_module=args.module)

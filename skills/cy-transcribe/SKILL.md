@@ -6,10 +6,10 @@ license: MIT
 
 # CY-transcribe · 转写与校对
 
-按用户要求提取、校对和整理抖音或本地音视频文字，或处理相关字幕与导出。显式调用本 Skill 时也可处理已有文稿和字幕。
+提取、校对抖音或本地音视频文字，处理相关字幕与导出；显式调用也可处理已有文稿和字幕。
 
-先运行 `& '<当前子 Skill>/scripts/invoke.ps1' guide`。成功时从 JSON 的 `references.suite` 读取共用规则，从 `references.runtime` 或 `references.content` 按需读取命令与交付细节；后续命令仍可经本子 Skill 的 `scripts/invoke.ps1` 透传。`guide` 返回错误或非零退出时，报告实际问题并停止，不能猜测共享目录或继续使用不一致的安装。
+先运行 `& '<当前子 Skill>/scripts/invoke.ps1' guide`。成功后读取 JSON 的 `references.suite`；错误或非零退出时报告并停止，不猜共享路径。后续命令用同一入口透传。
 
-- 音视频按运行指南获取音轨、使用豆包识别，由当前 Agent 通读并根据实际看图／听音能力校对。保留机器原文，检查依据与未解疑点按文稿指南记录。
-- 已有文字直接处理，不调用识别；已有 SRT 直接处理并另存，保留时间码等未要求修改的结构。识别结果有分句时间时才能导出 SRT；校对登记后用 `export-srt --reviewed` 导出沿用原时间轴的校对版字幕，竖屏短视频可加 `--max-chars` 和 `--strip-end-punct`，细节见 `references.runtime`。
-- 按要求给出正文和文件；不因转写自动分析、改写或入库。其他目标明确同时提出时，按共用路由组合处理。
+- 单条链接或音视频：依次读 `references.runtime`、`references.content`，再读共享目录的 `references/review-capabilities.md`，执行 `quick` 和默认校对、登记、交付。豆包仍是默认引擎；保留机器原文，实际看图／听音与未解疑点按文稿指南记录。无需再读总入口。
+- 已有文字不调用识别；已有 SRT 另存并保留未要求修改的结构，读共享目录的 `references/content-writing.md`。识别字幕导出读 `references/tasks.md` 的“复用与重试”；校对版用 `export-srt --reviewed`，短行可加 `--max-chars`／`--strip-end-punct`。
+- 聊天先交正文，再附文件。不因转写自动分析、改写或入库；同时提出的其他目标按共用规则组合。

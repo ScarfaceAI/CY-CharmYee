@@ -638,7 +638,7 @@ def plan(root: Path, manifest: Path) -> dict:
     if profile_entry and profile_target is None and profile_inside:
         diagnostics.append("profile_entry_unmapped：知识库个人档案入口没有映射到生活/、工作/ 或学习/")
     if profile_external:
-        diagnostics.append("profile_entry_external：个人档案入口位于知识库外，需由目标库入口适配后再迁移")
+        diagnostics.append("profile_entry_external：外部画像只读引用，不参与迁移；库内补充资料按页面映射。")
     if pending:
         diagnostics.append("pending_writes：先处理知识库待写入任务，不能移动其目标")
     preview = {
@@ -688,7 +688,7 @@ def plan(root: Path, manifest: Path) -> dict:
     for rel in preview["backup_paths"]:
         backup_source = _no_symlink(vault, rel)
         preview["backup_hashes"][rel] = digest(backup_source) if backup_source.is_file() else "-"
-    profile_blocked = profile_external or (profile_entry and profile_target is None)
+    profile_blocked = profile_inside and profile_target is None
     preview["status"] = "ready" if not unmapped and not pending and mode == "local" and not profile_blocked else (
         "needs_classification" if unmapped else "awaiting_target_writer" if mode != "local" else
         "blocked_pending_writes" if pending else "blocked_profile_entry")
@@ -734,8 +734,6 @@ def _gate_apply(root: Path, preview: dict, vault: Path) -> None:
         raise ValueError("预览时存在待处理知识库写入；处理完成后重新预览")
     if preview.get("profile_entry_inside") and not preview.get("profile_entry_target"):
         raise ValueError("profile_entry_unmapped：先把知识库档案入口映射到三域内")
-    if preview.get("profile_entry_external"):
-        raise ValueError("profile_entry_external：个人档案入口位于知识库外，需由目标库入口适配后再迁移")
     if preview["write_mode"] != "local":
         raise ValueError("awaiting_target_writer：当前规则要求目标库入口适配，不能绕过发布入口写入")
     state = personal_vault.state(root)
@@ -765,6 +763,8 @@ def _gate_apply(root: Path, preview: dict, vault: Path) -> None:
         expected_profile = str(vault / Path(*PurePosixPath(preview["profile_entry_target"]).parts))
         if state.get("profile_entry") not in {preview.get("profile_entry_before"), expected_profile}:
             raise ValueError("workspace profile_entry 在预览后已改变")
+    elif state.get("profile_entry") != preview.get("profile_entry_before"):
+        raise ValueError("workspace profile_entry 在预览后已改变")
     if preview.get("profile_file_source"):
         allowed_profile_hashes = {preview.get("profile_sha256_before"), preview.get("profile_sha256_after")}
         if state.get("profile_sha256") not in allowed_profile_hashes:

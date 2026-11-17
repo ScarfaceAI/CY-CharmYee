@@ -58,3 +58,45 @@ class OnboardingTests(WorkspaceCase):
         self.assertTrue(shown['onboarding']['due'])
         self.assertFalse(shown['cloud_asr_called'])
         self.assertFalse(isolated.exists())
+
+    def test_bilingual_catalog_and_welcome_include_search_and_decisions(self):
+        catalog = onboarding.catalog()
+        expected_ids = {'transcribe', 'analyze', 'download', 'rewrite', 'export',
+                        'knowledge', 'personal-vault', 'search', 'decisions', 'resume', 'setup'}
+        entries = catalog['capabilities']
+        ids = [entry['id'] for entry in entries]
+        self.assertEqual(expected_ids, set(ids))
+        self.assertEqual(len(expected_ids), len(ids), '能力 ID 不能重复')
+        for entry in entries:
+            self.assertEqual({'id', 'zh', 'en'}, set(entry))
+            for language in ('zh', 'en'):
+                self.assertEqual({'title', 'example', 'outcome'}, set(entry[language]))
+                for value in entry[language].values():
+                    self.assertIsInstance(value, str)
+                    self.assertTrue(value.strip(), f'{entry["id"]} 的 {language} 内容不能为空')
+
+        new_titles = {
+            'zh': {'search': '全文搜索', 'decisions': '决策记录与复盘'},
+            'en': {'search': 'Full-text search', 'decisions': 'Decision records and reviews'},
+        }
+        isolated = self.parent / 'catalog-user'
+        for language in ('zh', 'en'):
+            with self.subTest(language=language):
+                result = subprocess.run([
+                    sys.executable, '-B', '-X', 'utf8', str(SKILL_ROOT / 'scripts/brain.py'),
+                    '--workspace', str(isolated), 'welcome', '--lang', language,
+                ], capture_output=True, env=dict(os.environ, CY_UPDATE_CHECK='0'), timeout=20)
+                self.assertEqual(0, result.returncode, result.stderr.decode('utf-8', 'replace'))
+                shown = json.loads(result.stdout.decode('utf-8'))
+                self.assertEqual(language, shown['language'])
+                self.assertEqual(ids, [entry['id'] for entry in shown['capabilities']])
+                self.assertIn(catalog['intro'][language], shown['message'])
+                for entry in entries:
+                    self.assertIn({'id': entry['id'], **entry[language]}, shown['capabilities'])
+                    for value in entry[language].values():
+                        self.assertIn(value, shown['message'])
+                titles = {entry['id']: entry['title'] for entry in shown['capabilities']}
+                for identifier, title in new_titles[language].items():
+                    self.assertEqual(title, titles[identifier])
+                self.assertFalse(shown['cloud_asr_called'])
+                self.assertFalse(isolated.exists())

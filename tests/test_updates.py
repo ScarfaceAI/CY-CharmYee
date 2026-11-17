@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -197,6 +198,67 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual("disabled", updates.check_updates(self.skill, self.state)["status"])
             fetch.assert_not_called()
             self.assertEqual("update_available", updates.check_updates(self.skill, self.state, force=True)["status"])
+
+    def run_without_tkinter(self, arguments, *, apply_error=False):
+        script = '''import runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+scripts, mode, *arguments = sys.argv[1:]
+sys.path.insert(0, scripts)
+sys.modules['tkinter'] = None
+entry = str(Path(scripts) / 'brain.py')
+sys.argv = [entry, *arguments]
+options = ({'side_effect': RuntimeError('更新文件校验失败。')} if mode == 'error' else
+           {'return_value': {'status': 'up_to_date', 'current_version': '1.0.0'}})
+with patch('updates.apply_update', **options) as apply:
+    try:
+        runpy.run_path(entry, run_name='__main__')
+    except SystemExit as exc:
+        code = exc.code
+    assert apply.call_count == int('--apply' in arguments), apply.call_count
+assert sys.modules['tkinter'] is None
+for prefix in ('douyin_text.', 'runtime.douyin_text.'):
+    for name in ('cli', 'credentials', 'credential_dialog'):
+        assert prefix + name not in sys.modules, prefix + name
+raise SystemExit(code)
+'''
+        environment = {**os.environ, 'CY_UPDATE_CHECK': '0', 'CY_STATE_DIR': str(self.state),
+                       'CY_MODEL_DIR': str(self.base / 'models'), 'CY_WORKSPACE': str(self.workspace)}
+        return subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script,
+                               str(SKILL_ROOT / 'scripts'), 'error' if apply_error else 'ok', *arguments],
+                              capture_output=True, encoding='utf-8', env=environment, timeout=15)
+
+    def test_update_commands_work_without_tkinter_or_cli_imports(self):
+        for arguments, status in [(['check-update'], 'disabled'), (['update'], 'disabled'),
+                                  (['update', '--apply'], 'up_to_date')]:
+            with self.subTest(arguments=arguments):
+                process = self.run_without_tkinter(arguments)
+                self.assertEqual(0, process.returncode, process.stderr)
+                self.assertEqual('', process.stderr)
+                result = json.loads(process.stdout)
+                self.assertEqual(status, result['status'])
+                self.assertEqual(str(self.workspace), result['workspace'])
+                self.assertEqual('', result['tell_user'])
+
+    def test_update_outer_error_output_also_works_without_tkinter(self):
+        process = self.run_without_tkinter(['update', '--apply'], apply_error=True)
+        self.assertEqual(1, process.returncode, process.stderr)
+        self.assertEqual('', process.stderr)
+        result = json.loads(process.stdout)
+        self.assertEqual('error', result['status'])
+        self.assertEqual('更新文件校验失败。', result['error'])
+        self.assertEqual('这次没有完成：更新文件校验失败。', result['tell_user'])
+
+    def test_update_and_global_usage_errors_include_help_without_tkinter(self):
+        for arguments in (['update', '--unknown'], ['--workspace']):
+            with self.subTest(arguments=arguments):
+                process = self.run_without_tkinter(arguments)
+                self.assertEqual(1, process.returncode, process.stderr)
+                self.assertEqual('', process.stderr)
+                result = json.loads(process.stdout)
+                self.assertEqual('error', result['status'])
+                self.assertTrue(result['error'])
+                self.assertIn('--help', result['tell_user'])
 
     def test_update_preserves_workspace_and_modified_old_program_then_is_noop(self):
         with patch.object(updates, "latest_release", return_value=self.info), \

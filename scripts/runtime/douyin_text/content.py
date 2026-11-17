@@ -61,7 +61,7 @@ def restore_text_result(task: dict, root: Path = ROOT, item: dict | None = None)
         saved = read_json(folder / "result.json")
         if saved["text"] != text or any(digest(folder / ("transcript." + ext)) != saved["output_sha256"][ext] for ext in ("txt", "md")):
             raise ValueError("原始文稿缓存发生变化")
-        return {"id": media_id, "status": "imported", "result": relative(root, folder / "result.json"),
+        return {"id": media_id, "status": "imported", "reused": True, "result": relative(root, folder / "result.json"),
                 "markdown": relative(root, folder / "transcript.md"), "text": relative(root, folder / "transcript.txt")}
     result = {"created": task["created"], "engine": "provided-text", "parameters": {},
               "source": {"id": media_id, "title": Path(item["source"]).stem,
@@ -144,6 +144,13 @@ def register_content(task_id: str, files: list[Path], kind: str, root: Path = RO
                           "rewrite": "awaiting_edit", "ingest": "ready_for_ingest",
                           "compile": "awaiting_compile"}[task["purpose"]]
     workflow.save(task, root)
+    if kind == 'review':
+        from . import lexicon
+        try:
+            learned = lexicon.learn_registered(task, entries, root)
+            task['tell_user'] = learned['tell_user']
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+            task['tell_user'] = f'校对稿已登记成功；纠错记忆尚未写入：{exc}。可运行 lexicon learn 补建。'
     return task
 
 

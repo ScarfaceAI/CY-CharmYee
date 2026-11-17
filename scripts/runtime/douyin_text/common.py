@@ -52,21 +52,58 @@ def now() -> str:
 
 
 def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    deadline, delay = None, 0.02
+    while True:
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except PermissionError:
+            if os.name != 'nt':
+                raise
+            current = time.monotonic()
+            if deadline is None:
+                deadline = current + 2.0
+            remaining = deadline - current
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, 0.25)
 
 
 def write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
-                                     suffix=".tmp", delete=False) as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-        temporary = handle.name
-    os.replace(temporary, path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         suffix=".tmp", delete=False) as handle:
+            temporary = handle.name
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        deadline, delay = None, 0.02
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if os.name != 'nt':
+                    raise
+                current = time.monotonic()
+                if deadline is None:
+                    deadline = current + 2.0
+                remaining = deadline - current
+                if remaining <= 0:
+                    raise
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, 0.25)
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def config(root: Path = ROOT) -> dict:
-    defaults = {"chunk_seconds": 300, "asr_timeout_seconds": 300, "vault_root": None, "assistant_root": None}
+    defaults = {"chunk_seconds": 300, "asr_timeout_seconds": 300, "vault_root": None, "assistant_root": None,
+                "asr_engine": "doubao", "asr_threads": None, "asr_queue_timeout_seconds": 600,
+                "asr_background_threshold_seconds": 120, "number_conversion": True, "cjk_spacing": True,
+                "asr_hotwords": True, "asr_hotwords_limit": 20}
     path = root / "config.json"
     return {**defaults, **(read_json(path) if path.exists() else {})}
 

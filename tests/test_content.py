@@ -118,7 +118,8 @@ class SetupTests(WorkspaceCase):
         rules = self.root / "AGENTS.md"
         rules.write_text("# 我的规则\n\n保留这一段。\n", encoding="utf-8")
         appdata = self.parent / "appdata"
-        with patch.dict(os.environ, {"LOCALAPPDATA": str(appdata)}):
+        # Exercise the default state path even when the test runner isolates shared state.
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(appdata), "CY_STATE_DIR": "", "DYB_STATE_DIR": ""}):
             setup.initialize(self.root, register=True)
             setup.initialize(self.root, register=True)
         body = rules.read_text(encoding="utf-8")

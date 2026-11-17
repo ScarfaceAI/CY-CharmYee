@@ -8,6 +8,16 @@ from .common import ROOT, config, digest, inside, now, read_json, safe_name, wri
 from .workflow import load, save
 
 
+def guard_profile_targets(root, vault, files):
+    from . import personal_vault
+    value = personal_vault.state(root)
+    for entry in files:
+        if entry['target'] == '@profile':
+            raise ValueError('外部画像只读，发布入口不能写入 @profile。')
+        personal_vault.guard_profile_write(value, vault / entry['target'])
+    personal_vault.guard_profile_write(value, vault / 'index.md')
+
+
 def publication_plan(task: dict, root: Path = ROOT) -> list[dict]:
     if task.get("purpose") not in {"ingest", "compile"} or not task.get("evidence"):
         raise ValueError("本次未选择入库用途")
@@ -27,6 +37,7 @@ def prepare(task: dict, root: Path = ROOT, *, pages: list[dict] | None = None,
     transaction = task["id"] + "-publish"
     folder = staging / transaction
     entries = publication_plan(task, root)
+    guard_profile_targets(root, vault, [*entries, *(pages or [])])
     if task["purpose"] == "compile" and not pages:
         raise ValueError("本任务需要 Agent 先生成知识页；可用 preview 查看原始材料的 sources 路径")
     if task["purpose"] == "ingest" and pages:
@@ -89,6 +100,7 @@ def publish(task_id: str, root: Path = ROOT, *, pages: list[dict] | None = None)
         manifest = read_json(manifest_path)
     else:
         manifest_path, manifest = prepare(task, root, pages=pages)
+    guard_profile_targets(root, Path(cfg['vault_root']), manifest['files'])
     hashes = {entry["source"]: digest(inside(manifest_path.parent, entry["source"]))
               for entry in manifest["files"]}
     prior_inputs = task.get("publication", {}).get("inputs")

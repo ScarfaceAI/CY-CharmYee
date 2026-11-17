@@ -12,6 +12,18 @@ from package import collect, make_manifest
 from release_assets import version_tuple
 
 
+# 只保留历史原文已有的 7 处英文链接；新文档和其他链接仍须检查。
+HISTORICAL_EN_LINKS = {
+    ("docs/releases/v1.5.0.md", "../../references/continuation.en.md"),
+    ("docs/releases/v1.6.0.md", "../../references/personal-vault.en.md"),
+    ("docs/releases/v1.6.0.md", "../../references/suite.en.md"),
+    ("docs/releases/v1.6.0.md", "../../references/brand-migration.en.md"),
+    ("docs/releases/v1.7.0.md", "../../references/personal-vault.en.md"),
+    ("docs/releases/v1.7.0.md", "../../references/personal-domains.en.md"),
+    ("docs/verification/workflow-continuity.md", "../../references/continuation.en.md"),
+}
+
+
 def check(root: Path) -> list[str]:
     errors = []
     version = (root / "VERSION").read_text().strip()
@@ -21,11 +33,11 @@ def check(root: Path) -> list[str]:
         errors.append(str(exc))
     notes = root / "docs/releases" / f"v{version}.md"
     if not notes.is_file():
-        errors.append("Missing release notes for VERSION")
+        errors.append("缺少 VERSION 对应版本的发布说明")
     else:
         notes_text = notes.read_text(encoding="utf-8-sig")
-        if "## 中文" not in notes_text or "## English" not in notes_text:
-            errors.append("Release notes must include Chinese and English sections")
+        if not notes_text.strip():
+            errors.append("发布说明正文为空")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8-sig")
     if not re.search(r"^## " + re.escape(version) + r" - \d{4}-\d{2}-\d{2}$", changelog, re.M):
         errors.append("CHANGELOG.md has no dated entry for VERSION")
@@ -48,7 +60,7 @@ def check(root: Path) -> list[str]:
                 errors.append(str(exc))
         if path.suffix == ".svg":
             ET.fromstring(data)
-        if path.suffix in {".png", ".jpg"}:
+        if path.suffix.lower() in {".png", ".jpg", ".onnx"}:
             continue
         text = data.decode("utf-8-sig")
         if re.search(r"(?:gh[pousr]_[A-Za-z0-9]{25,}|sk-[A-Za-z0-9]{30,})", text):
@@ -63,6 +75,8 @@ def check(root: Path) -> list[str]:
         for link in links:
             link = link.strip("<> ").split("#")[0]
             if not link or urlsplit(link).scheme or link.startswith("//"):
+                continue
+            if (name, link) in HISTORICAL_EN_LINKS:
                 continue
             target = (path.parent / unquote(link)).resolve()
             if not target.is_relative_to(root.resolve()) or not target.exists():

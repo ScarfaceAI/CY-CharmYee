@@ -15,7 +15,7 @@ Describe effects on installation arguments, existing skills, workspace data, cre
 
 ## Release preparation / 发布准备
 
-If this PR prepares a release, identify updates to `VERSION`, `CHANGELOG.md`, bilingual release notes, and `bundle.json`. Routine changes do not require a version bump.
-如本 PR 准备发布，说明 `VERSION`、`CHANGELOG.md`、中英文 Release 说明及 `bundle.json` 的更新情况；普通改动不要求每次升版本。
+If this PR prepares a release, identify updates to `VERSION`, `CHANGELOG.md`, the Chinese release notes, and `bundle.json`. Routine changes do not require a version bump.
+如本 PR 准备发布，说明 `VERSION`、`CHANGELOG.md`、中文发布说明及 `bundle.json` 的更新情况；普通改动不要求每次升版本。
 
 Do not include credentials, personal media, or raw browser state. 不要粘贴凭据、私人媒体或浏览器原始状态。

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
-import json
 import os
 import shutil
 import sys
 from pathlib import Path
 
 from . import asr, credentials, media, vault, workflow, content, setup, review
-from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles
+from . import creator_cli, onboarding, work, continuation, personal_vault_cli, subtitles, models, background, lexicon
+from . import quick, messages, selftest, search, decisions
 from .common import ROOT, RESOURCE_ROOT, SKILL_ROOT, config
 
 
@@ -17,7 +18,13 @@ def doctor() -> dict:
     checks = {name: bool(shutil.which(name)) for name in ("ffmpeg", "ffprobe")}
     checks["playwright"] = importlib.util.find_spec("playwright") is not None
     checks["yt_dlp"] = importlib.util.find_spec("yt_dlp") is not None
+    try:
+        importlib.import_module('sherpa_onnx')
+        checks['sherpa_onnx'] = True
+    except (ImportError, OSError):
+        checks['sherpa_onnx'] = False
     checks["chromium"] = bool(list((ROOT / ".local/browsers").glob("chromium-*/chrome-win*/chrome.exe")))
+    local_models = models.status(cache=False)
     present = bool(os.environ.get("DOUBAO_ASR_API_KEY") or
                    (os.environ.get("DOUBAO_ASR_APP_ID") and os.environ.get("DOUBAO_ASR_ACCESS_KEY")) or
                    (ROOT / ".local/doubao.dpapi").is_file())
@@ -25,6 +32,7 @@ def doctor() -> dict:
     assistant = Path(cfg["assistant_root"]) if cfg.get("assistant_root") else None
     return {"status": "environment_ready" if all(checks.values()) else "environment_incomplete",
             "workspace": str(ROOT), "resource_root": str(RESOURCE_ROOT), "checks": checks,
+            "local_models": local_models,
             "doubao_credentials_present": present, "doubao_api_status": "not_checked_by_doctor",
             "login_status": "not_checked_by_doctor", "vault_root": cfg.get("vault_root"),
             "native_vault_entry_present": bool(assistant and (assistant / "scripts/vault.py").is_file()),
@@ -41,12 +49,29 @@ def doctor() -> dict:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="cy-charmyee：需求路由、原文留底、校对与口播、知识归档")
+    root = messages.ArgumentParser(description="cy-charmyee：需求路由、原文留底、校对与口播、知识归档")
     sub = root.add_subparsers(dest="command", required=True)
     creator_cli.add_parser(sub)
     work.add_parser(sub)
     continuation.add_parser(sub)
     personal_vault_cli.add_parser(sub)
+    models.add_parser(sub)
+    lexicon.add_parser(sub)
+    decide = sub.add_parser('decide', help='记录决定、复盘及查找相关资料')
+    decision_commands = decide.add_subparsers(dest='decide_command', required=True)
+    decision_commands.add_parser('new').add_argument('--file', type=Path, required=True)
+    decision_list = decision_commands.add_parser('list')
+    decision_list.add_argument('--due', action='store_true', help='只列到期未复盘的决定，仍列出待修正文件')
+    decision_list.add_argument('--domain', help='生活、工作、学习或 life、work、learning')
+    decision_review = decision_commands.add_parser('review')
+    decision_review.add_argument('decision', help='决定的 ID、库内路径或唯一标题')
+    decision_review.add_argument('--file', type=Path, required=True)
+    decision_commands.add_parser('related').add_argument('--query', required=True)
+    find = sub.add_parser('search', help='搜索机器原稿、校对稿和已开启方向的知识库页面')
+    find.add_argument('terms', nargs='+', help='多个词用空格分开，全部命中才返回')
+    find.add_argument('--limit', type=int, default=10, help='结果条数，默认为 10，上限为 50')
+    find.add_argument('--kind', choices=tuple(search.KINDS), help='只搜索指定类型')
+    find.add_argument('--rebuild', action='store_true', help='从当前文件重建本地搜索缓存')
     sub.add_parser("doctor")
     welcome = sub.add_parser('welcome', help='显示功能与首次使用引导，不调用语音识别')
     welcome.add_argument('--lang', choices=('zh', 'en'), default='zh')
@@ -54,6 +79,10 @@ def parser() -> argparse.ArgumentParser:
     configure = sub.add_parser("configure", help="在本机安全填写豆包语音凭据")
     configure.add_argument("--legacy", action="store_true", help="旧控制台 APP ID + Access Token")
     sub.add_parser("login", help="打开项目专用抖音登录浏览器")
+    check = sub.add_parser('selftest', help='用本机样本分别探测 4 种获取方式，不调用识别')
+    sample = check.add_mutually_exclusive_group()
+    sample.add_argument('--sample', action='append', default=[], help='添加自己的公开作品链接，最多保存 2 条')
+    sample.add_argument('--clear-samples', action='store_true', help='清空本机自检样本，本次不探测')
     inspect = sub.add_parser("inspect-source", help="只检查单条视频链接或本地素材获取，不调用语音识别")
     inspect.add_argument("inputs", nargs="+")
     inspect.add_argument("--anonymous-only", action="store_true", help="不使用已保存的账号或浏览器状态")
@@ -70,6 +99,9 @@ def parser() -> argparse.ArgumentParser:
     evidence.add_argument('--cached-only', action='store_true', help='只使用已有音画缓存；缺失时报告，不联网补取')
     plan = sub.add_parser("plan", help="创建待确认任务，不下载、不调用识别")
     plan.add_argument("inputs", nargs="+")
+    fast = sub.add_parser('quick', help='一条作品链接或一个本地文件直接出稿，沿用现有任务与缓存')
+    fast.add_argument('inputs', nargs='+')
+    fast.add_argument('--evidence', default='', help='用户原话；省略时记录 quick 默认用途说明')
     confirm = sub.add_parser("confirm", help="记录用户本次明确选择")
     confirm.add_argument("task")
     confirm.add_argument("--purpose", choices=workflow.PURPOSES, required=True)
@@ -90,8 +122,15 @@ def parser() -> argparse.ArgumentParser:
     offline = sub.add_parser('reanalyze', help='基于普通任务的已有文稿建立独立离线分析')
     offline.add_argument('task')
     offline.add_argument('--instruction', required=True)
+    redisplay = sub.add_parser('redisplay', help='用本地模型原文重算数字与间距，另存新版本')
+    redisplay.add_argument('task')
+    redisplay.add_argument('--numbers', choices=('on', 'off'), help='开启或关闭数字转换；省略时沿用当前配置')
+    redisplay.add_argument('--spacing', choices=('on', 'off'), help='开启或关闭间距；省略时沿用当前配置')
+    sub.add_parser('suspects', help='按当前词库和记忆重算所有结果的疑点，不改原稿').add_argument('task')
     for name in ("show", "preview"):
         sub.add_parser(name).add_argument("task")
+    for name, help_text in [('status', '查看本地识别进度与后台进程状态'), ('cancel', '取消本任务后台识别并保留成功分片')]:
+        sub.add_parser(name, help=help_text).add_argument('task')
     srt = sub.add_parser("export-srt", help="用已存的识别分句时间导出字幕，不调用识别")
     srt.add_argument("task")
     srt.add_argument("--reviewed", action="store_true", help="改用已登记的校对稿文字，沿用识别分句时间")
@@ -136,10 +175,23 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    values = sys.argv[1:] if argv is None else argv
+    command = values[0] if values else ''
     try:
-        if args.command == 'kb':
+        args = parser().parse_args(values)
+        if args.command in {'creator', 'kb', 'decide'} and len(values) > 1:
+            command = ' '.join(values[:2])
+        if args.command == 'models':
+            result = models.dispatch(args)
+        elif args.command == 'lexicon':
+            result = lexicon.dispatch(args)
+        elif args.command == 'kb':
             result = personal_vault_cli.dispatch(args)
+        elif args.command == 'decide':
+            result = decisions.dispatch(args, ROOT)
+        elif args.command == 'search':
+            result = search.query(' '.join(args.terms), root=ROOT, limit=args.limit,
+                                  kind=args.kind, rebuild=args.rebuild)
         elif args.command == 'resume':
             result = continuation.resume(task_id=args.task, inputs=args.input, purpose=args.purpose,
                                          instruction=args.instruction, request=args.request)
@@ -158,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         elif args.command == "login":
             return media.douyin_browser.login(ROOT / ".local" / "douyin-profile")
+        elif args.command == 'selftest':
+            result = selftest.run(args.sample, clear=args.clear_samples, root=ROOT)
         elif args.command == "inspect-source":
             result = review.inspect_source(args.inputs, anonymous_only=args.anonymous_only, download_audio=args.download_audio)
         elif args.command == "prepare-review":
@@ -182,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
             result = content.record_publication(args.task, args.receipt)
         elif args.command == "plan":
             result = workflow.plan(args.inputs)
+        elif args.command == 'quick':
+            result = quick.run(args.inputs, args.evidence, root=ROOT)
         elif args.command == "confirm":
             scope = {key: value for key, value in {"all": args.all, "latest": args.latest,
                                                   "start": args.start, "end": args.end}.items() if value}
@@ -193,8 +249,16 @@ def main(argv: list[str] | None = None) -> int:
                                   saved_scope=args.saved_scope)
         elif args.command == 'reanalyze':
             result = workflow.reanalyze(args.task, args.instruction)
+        elif args.command == 'redisplay':
+            result = workflow.redisplay(args.task,
+                number_conversion=None if args.numbers is None else args.numbers == 'on',
+                cjk_spacing=None if args.spacing is None else args.spacing == 'on')
         elif args.command == "show":
-            result = workflow.load(args.task)
+            result = workflow.show(args.task)
+        elif args.command == 'suspects':
+            result = workflow.recalculate_suspects(args.task)
+        elif args.command in {'status', 'cancel'}:
+            result = getattr(background, args.command)(args.task)
         elif args.command == "preview":
             result = {"sources": vault.publication_plan(workflow.load(args.task))}
         elif args.command == "export-srt":
@@ -212,10 +276,10 @@ def main(argv: list[str] | None = None) -> int:
                      for file, target, checksum in zip(args.page, args.target, args.expected_sha256)]
             result = vault.publish(args.task, pages=pages)
         # Recorded file paths are workspace-relative; name the workspace so they can be opened.
-        result.setdefault("workspace", str(ROOT))
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1 if result.get("status") in {"incomplete", "failed", "publish_failed", "publication_unknown",
-                                            "environment_incomplete"} else 0
+        messages.emit_json(result, command=command, root=ROOT)
+        return int(result.get("status") in {"incomplete", "failed", "publish_failed", "publication_unknown",
+                                           "environment_incomplete"} or
+                   (args.command == 'quick' and result.get('status') in {'error', 'needs_scope'}))
     except (ValueError, RuntimeError, OSError, KeyError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
+        messages.emit_json(messages.error_result(exc, command), command=command, root=ROOT)
         return 1

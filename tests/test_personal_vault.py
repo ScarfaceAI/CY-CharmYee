@@ -102,20 +102,22 @@ class PersonalVaultTests(WorkspaceCase):
             self.assertTrue(original.is_relative_to(self.vault / '生活/资料/建档'))
             self.assertIn('我做游戏解说', original.read_text(encoding='utf-8'))
 
-    def test_external_profile_provenance_resolves_after_target_writer_saves(self):
+    def test_external_profile_provenance_resolves_from_readonly_supplement(self):
         profile = self.parent / 'canonical profile.md'
+        profile.write_text('已有外部画像。\n', encoding='utf-8')
+        before = (profile.read_bytes(), profile.stat().st_mtime_ns)
         self.enable(profile=profile)
         result = self.reply()['saving']
-        self.assertEqual('awaiting_target_writer', result['status'])
-        for row in result['files']:
-            target = profile if row['target'] == '@profile' else self.vault / row['target']
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes((self.root / row['snapshot']).read_bytes())
+        self.assertEqual('saved', result['status'])
+        self.assertNotIn('@profile', [row['target'] for row in result['files']])
         raw_target = result['files'][0]['target']
-        (self.vault / 'index.md').write_text(f'[原话]({raw_target})', encoding='utf-8')
         self.assertEqual('saved', kb.apply(result['id'], self.root, external=True)['status'])
-        for link in re.findall(r'\[用户回答\]\(([^)]+)\)', profile.read_text(encoding='utf-8')):
-            self.assertEqual((self.vault / raw_target).resolve(), (profile.parent / unquote(link)).resolve())
+        supplement = self.vault / kb.PROFILE_SUPPLEMENT
+        links = re.findall(r'\[用户回答\]\(([^)]+)\)', supplement.read_text(encoding='utf-8'))
+        self.assertTrue(links)
+        for link in links:
+            self.assertEqual((self.vault / raw_target).resolve(), (supplement.parent / unquote(link)).resolve())
+        self.assertEqual(before, (profile.read_bytes(), profile.stat().st_mtime_ns))
 
     def test_explicit_correction_updates_profile_and_retains_history(self):
         self.enable()

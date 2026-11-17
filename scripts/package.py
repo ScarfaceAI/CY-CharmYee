@@ -12,8 +12,8 @@ import zipfile
 from suite_manifest import validate_suite
 
 EXCLUDED = {".venv", ".local", ".cache", "__pycache__", "runs", "outputs", ".git", ".scratch", ".trash", "tests", "dist", "exports"}
-SUFFIXES = {".md", ".py", ".ps1", ".cmd", ".txt", ".yaml", ".html", ".png", ".svg", ".json"}
-ROOT_FILES = {"SKILL.md", "INSTALL.md", "README.md", "README.en.md", "LICENSE", "VERSION",
+SUFFIXES = {".md", ".py", ".ps1", ".cmd", ".txt", ".yaml", ".html", ".png", ".svg", ".json", ".onnx"}
+ROOT_FILES = {"SKILL.md", "INSTALL.md", "README.md", "LICENSE", "VERSION",
               "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "SECURITY.md", "SOURCE_OF_TRUTH.md",
               "CONTRIBUTING.md", "给Agent的安装提示词.txt", "豆包配置教程.html"}
 PAYLOAD_DIRS = {"scripts", "references", "agents", "assets", "docs", "skills"}
@@ -62,7 +62,7 @@ def write_manifest(skill: Path, version: str) -> dict:
 def normalize_text_files(skill: Path) -> None:
     """Match .gitattributes so source ZIPs and Git checkouts have identical hashes."""
     for name, data in collect(skill).items():
-        if Path(name).suffix.lower() in {".png", ".jpg"}:
+        if Path(name).suffix.lower() in {".png", ".jpg", ".onnx"}:
             continue
         normalized = data.replace(b"\r\n", b"\n")
         # Windows PowerShell 5.1 otherwise reads UTF-8 scripts using the system code page.

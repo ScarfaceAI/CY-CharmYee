@@ -1,21 +1,20 @@
 ---
 name: cy-vault
-description: Proactively use opted-in personal knowledge during everyday learning, work, and life tasks. Retrieve relevant context, preserve explicit changes and outcomes, set up or connect a knowledge base, and continue personal interviews or profile corrections.
+description: Proactively use opted-in personal knowledge during everyday learning, work, and life tasks. Search sources, record decisions, surface due reviews, and retrieve related decisions and evidence. Preserve explicit changes and outcomes, set up or connect a knowledge base, and continue interviews or profile corrections.
 license: MIT
 ---
 
 # CY-vault · 个人知识库
 
-通过持续、逐轮一个核心问题的对话了解用户，让生活、工作和学习资料在正常任务中逐渐积累。负责建库、接入、建档、使用范围与续办；材料归档和主题整理可复用 cy-knowledge。共用套件配置和运行时，不创建额外 Agent。
-
-三方向建档及旧库迁移从 1.7.0 开始提供；旧安装需更新后使用，保存与迁移结果以实际回执为准。
+通过持续、逐轮一个核心问题的对话了解用户，让生活、工作和学习资料在正常任务中逐渐积累；记录决定，到期复盘，做新决定时调出相关依据。负责建库、接入、建档、使用范围与续办；材料归档和主题整理可复用 cy-knowledge。共用套件配置和运行时，不创建额外 Agent。
 
 先运行本子 Skill 的 `scripts/invoke.ps1 guide`，读取成功结果中的 `references.suite` 和 `references.personal-vault`；后续命令经同一入口透传。入口失败时报告真实问题，不猜共享目录。
 
 - 首次主动介绍这项可选能力，不阻断明确任务。新库先问“你现在最想让我帮助你哪方面的事？”，给出“1．学习、2．工作、3．生活”；选择只决定先聊哪一块，目标已经明确时直接以对应方向开始。三方向都默认参与。已有用户沿用原收录范围；迁移或刷新 Host 入口不扩大授权，只有用户明确要求时才用 `kb enable --all-domains --evidence ...` 扩展到三方向。用户选择启用后，默认推荐当前所选 Agent 的日常聊天，也可只在套件工作区使用。
 - 先运行只读 `kb context`，复用明确已有资料与进度。访谈每轮只问一个核心问题，并持续到用户暂停、停止、拒答或换话题；基础字段齐全不代表结束。普通任务不强制采访。
+- 找资料用 `search`；记录决定或复盘用 `decide`，做新决定时先调出相关旧决定和资料。沿共享个人知识库指南中的“全文搜索”“决策记录”链接读取细节。对话开头的 `kb context` 返回到期复盘提醒时，原样转告 `tell_user`，同一会话去重；不在后台定时提醒，也不替用户做决定。
 - 命令提示有新版时，在本会话首次交付中加一句面向用户的提醒，包含当前版本、新版和“@cy-charmyee 更新”；工具输出不算已告知。同一会话不重复，新会话仍提醒，继续原任务，不自动安装。
-- 原话、明确事实、主观感受和未确认推测保持可辨。已授权范围内主动保存明确的新事实、状态、目标变化和实际结果，不要求用户每次说“记住”；普通聊天不批量变成档案。已有公共个人档案归生活，工作项目或账号风格保留各自场景范围。
+- 原话、明确事实、主观感受和未确认推测保持可辨。已授权范围内主动保存明确的新事实、状态、目标变化和实际结果，不要求用户每次说“记住”；普通聊天不批量变成档案。外部个人档案只读引用，新增情况写库内补充页；无外部档案时维护库内基本资料。工作项目或账号风格保留各自场景范围。
 - 生活、工作、学习方向和问题指引，沿上述共享个人知识库指南中的“个人知识方向”链接读取；由 guide 返回的共享路径定位资源，兼容源码和安装布局。任务开始先查相关资料，成果可复用时主动保存并整理主题，交付时自然、简短地点明重要变化与实际保存结果。
 - 新旧库的内容统一归入顶层 `生活/`、`工作/`、`学习/`，内部目录按需生长。已有库迁移先读全部现行规则、内容和入口，提供完整映射预览；用户一次确认后才备份、迁移、更新链接/索引/状态并核验，同时保留恢复能力和原始历史，不清理原内容。
 - Host 入口用短规则指向共享指南，并用本 Skill description 触发日常相关任务；配置可选仅限 workspace。宿主可能不在每次聊天加载 Skill，不能把入口文件说成后台监听。静态安装不等于新聊天行为验收。
