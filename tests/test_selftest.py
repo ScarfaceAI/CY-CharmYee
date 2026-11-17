@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
-from support import SKILL_ROOT, read_json, write_json
+from support import read_json, write_json
 from douyin_text import acquisition, asr, cli, douyin_browser as browser, media, messages, selftest
 
 URL = 'https://www.douyin.com/video/123'
@@ -42,9 +42,7 @@ class Stream(io.BytesIO):
 
 class SelftestTests(unittest.TestCase):
     def setUp(self):
-        base = SKILL_ROOT / '.scratch/m1-selftest'
-        base.mkdir(parents=True, exist_ok=True)
-        temp = tempfile.TemporaryDirectory(dir=base)
+        temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         self.profile = self.root / '.local/douyin-profile'

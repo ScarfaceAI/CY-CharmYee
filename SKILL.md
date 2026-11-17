@@ -14,7 +14,7 @@ license: MIT
 
 ## 路由与共享约束
 
-明确的单项需求直接使用对应子 Skill：`cy-transcribe` 负责转写、校对、字幕和导出；`cy-analyze` 负责单条内容、本地音视频和账号分析；`cy-download` 负责主页视频下载；`cy-write` 负责口播改写与压缩；`cy-knowledge` 负责材料归档与主题编译；`cy-vault` 负责生活、工作、学习知识库配置、持续访谈和已开启范围内的日常资料维护。对外显示名称统一为 `CY-xxxx`，宿主读取的 Skill ID 与目录使用小写 `cy-xxxx`。用户显式调用总入口处理单项时，由当前 Agent 按相应流程直接完成。调用子 Skill 不自动创建额外 Agent；路由及共用安装、状态和执行规则见[套件说明](references/suite.md)（英文：[suite.en.md](references/suite.en.md)）。
+明确的单项需求直接使用对应子 Skill：`cy-transcribe` 负责转写、校对、字幕和导出；`cy-analyze` 负责单条内容、本地音视频和账号分析；`cy-download` 负责主页视频下载；`cy-write` 负责口播改写与压缩；`cy-knowledge` 负责材料归档与主题编译；`cy-vault` 负责生活、工作、学习知识库配置、持续访谈和已开启范围内的日常资料维护。对外显示名称统一为 `CY-xxxx`，宿主读取的 Skill ID 与目录使用小写 `cy-xxxx`。用户显式调用总入口处理单项时，由当前 Agent 按相应流程直接完成。调用子 Skill 不自动创建额外 Agent；路由及共用安装、状态和执行规则见[套件说明](references/suite.md)。
 
 用户目标明确时直接执行，沿用此前仍有效的授权；只在素材或目标确实不明时问一个关键问题。普通主页转写缺范围时补问；明确全量博主分析或下载不重复问范围。组合目标只执行用户要求的步骤，复用实际有效的产物；新增博主语音先展示本批用量并取得本批授权。已有文字直接处理、留存原文，不调用语音识别。入库或编译遵循明确且仍有效的授权，包括通过 cy-vault 开启的模块和自动积累范围。
 
@@ -24,7 +24,7 @@ license: MIT
 
 ## 首次介绍与维护
 
-- 首次安装前按[首次介绍](references/onboarding.md)在聊天中说明 9 组能力、例子、产出和何时需要语音配置；英文用 [onboarding.en.md](references/onboarding.en.md)。安装后首次使用运行 `welcome` 核对 `onboarding.due` 和本机状态，待介绍或用户要求时实际讲解，再用 `welcome --acknowledge` 登记。各入口共用状态；登记不代表用户理解、授权或真实云端验收。用户目标已明确时介绍后继续。
+- 首次安装前按[首次介绍](references/onboarding.md)在聊天中说明 9 组能力、例子、产出和何时需要语音配置；英文用户用 `welcome --lang en`。安装后首次使用运行 `welcome` 核对 `onboarding.due` 和本机状态，待介绍或用户要求时实际讲解，再用 `welcome --acknowledge` 登记。各入口共用状态；登记不代表用户理解、授权或真实云端验收。用户目标已明确时介绍后继续。
 - 用户明确要求更新本套件时，直接运行 `scripts/invoke.ps1 update --apply`；按结果报告失败或成功，并在成功后重读返回的新版入口。具体状态见[版本检查与升级](references/runtime.md#版本检查与升级)。
 - 安装、修复或迁移读 [INSTALL.md](INSTALL.md)；工作目录、知识库和凭据读[配置与迁移](references/setup.md)；豆包开通与排障读[语音配置教程](references/doubao-setup.md)。遵循用户指定路径，凭据只在本机配置。安装器与 `doctor` 的本地结果不等于真实语音、登录或宿主会话验收。
 

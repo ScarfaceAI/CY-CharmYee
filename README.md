@@ -3,7 +3,6 @@
   <h1>承意 · CY-CharmYee</h1>
   <p>承你所想，会你所意。</p>
   <p>用对话建立个人知识库，把资料、想法和创作成果积累成自己的第二大脑。</p>
-  <p>中文 · <a href="README.en.md">English</a></p>
 </div>
 
 [![CI](https://github.com/ScarfaceAI/CY-CharmYee/actions/workflows/check.yml/badge.svg)](https://github.com/ScarfaceAI/CY-CharmYee/actions/workflows/check.yml)
