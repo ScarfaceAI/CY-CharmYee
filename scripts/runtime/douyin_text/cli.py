@@ -104,6 +104,7 @@ def parser() -> argparse.ArgumentParser:
     redisplay.add_argument('task')
     redisplay.add_argument('--numbers', choices=('on', 'off'), help='开启或关闭数字转换；省略时沿用当前配置')
     redisplay.add_argument('--spacing', choices=('on', 'off'), help='开启或关闭间距；省略时沿用当前配置')
+    sub.add_parser('suspects', help='按当前词库和记忆重算所有结果的疑点，不改原稿').add_argument('task')
     for name in ("show", "preview"):
         sub.add_parser(name).add_argument("task")
     for name, help_text in [('status', '查看本地识别进度与后台进程状态'), ('cancel', '取消本任务后台识别并保留成功分片')]:
@@ -218,7 +219,9 @@ def main(argv: list[str] | None = None) -> int:
                 number_conversion=None if args.numbers is None else args.numbers == 'on',
                 cjk_spacing=None if args.spacing is None else args.spacing == 'on')
         elif args.command == "show":
-            result = workflow.load(args.task)
+            result = workflow.show(args.task)
+        elif args.command == 'suspects':
+            result = workflow.recalculate_suspects(args.task)
         elif args.command in {'status', 'cancel'}:
             result = getattr(background, args.command)(args.task)
         elif args.command == "preview":

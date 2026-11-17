@@ -17,6 +17,9 @@ MANIFEST = SKILL_ROOT / 'assets/lexicons.json'
 UNAVAILABLE = '公开词库尚未就绪，本次照常处理文稿和记录纠错。'
 DOWNLOADING = '公开词库正在后台下载，下次起生效；本次照常降级处理。'
 DOWNLOAD_FAILED = '公开词库下载失败，本次照常降级处理；可用 lexicon import-public 手动导入，或用 lexicon download 重试。'
+GENERAL_UNAVAILABLE = '通用词表尚未就绪，本次跳过同音疑点；纠错记忆、数字和疑似编造检查照常。'
+GENERAL_DOWNLOADING = '通用词表正在后台下载，本次跳过同音疑点；其他三类检查照常，下载完成后可用 suspects 重算。'
+GENERAL_FAILED = '通用词表下载或校验失败，本次跳过同音疑点；其他三类检查照常，可用 lexicon download --dictionary jieba 重试或用 lexicon import-public --dictionary jieba 手动导入。'
 TERM_CATEGORIES = {'IT', 'medical', 'law', 'car'}
 NAME_CATEGORIES = {'lishimingren', 'diming'}
 PLAIN_WORDS = {'今天', '明天', '我们', '你们', '他们', '自己', '这个', '那个', '什么', '学习',
@@ -32,8 +35,15 @@ TYPE_LABELS = {'term': '专名或术语', 'phrase': '词语或短语', 'english'
 
 
 def manifest() -> dict:
-    data = read_json(MANIFEST)
-    if data.get('schema_version') != 1 or data.get('id') != 'thuocl':
+    return _validate_manifest(read_json(MANIFEST), 'thuocl')
+
+
+def general_manifest() -> dict:
+    return _validate_manifest(read_json(MANIFEST)['general'], 'jieba')
+
+
+def _validate_manifest(data: dict, expected: str) -> dict:
+    if data.get('schema_version') != 1 or data.get('id') != expected:
         raise ValueError('词库清单版本或标识不正确。')
     if not re.fullmatch('[0-9a-f]{40}', data.get('revision', '')) or data.get('license') != 'MIT':
         raise ValueError('词库必须固定提交版本并声明 MIT 许可。')
@@ -50,7 +60,7 @@ def manifest() -> dict:
 
 
 def public_folder(spec: dict) -> Path:
-    return models._path(models.model_root(), 'lexicons/thuocl-' + spec['revision'])
+    return models._path(models.model_root(), 'lexicons/' + spec['id'] + '-' + spec['revision'])
 
 
 def public_status() -> dict:
@@ -82,6 +92,57 @@ def download_public(*, source: Path | None = None) -> dict:
     source = Path(source).expanduser().resolve() if source is not None else None
     result = models.acquire_data(public_folder(spec), spec['files'] + [spec['license_file']], source=source)
     return {**public_status(), 'progress': result['progress']}
+
+
+def _general_notice(status: dict) -> str:
+    if status['ready']:
+        return '通用词表已就绪，文件大小与 SHA-256 均通过校验。'
+    return {'downloading': GENERAL_DOWNLOADING, 'failed': GENERAL_FAILED}.get(status.get('status'), GENERAL_UNAVAILABLE)
+
+
+def general_status() -> dict:
+    spec = general_manifest()
+    folder = public_folder(spec)
+    status = models.data_status(folder, spec['files'] + [spec['license_file']])
+    return {**status, 'revision': spec['revision'], 'directory': str(folder), 'tell_user': _general_notice(status)}
+
+
+def ensure_general() -> dict:
+    try:
+        spec = general_manifest()
+        status = models.ensure_data(public_folder(spec), spec['files'] + [spec['license_file']])
+        return {**status, 'tell_user': _general_notice(status)}
+    except (OSError, ValueError, KeyError, models.ModelError) as exc:
+        return {'ready': False, 'status': 'failed', 'reason': str(exc), 'tell_user': GENERAL_FAILED}
+
+
+def download_general(*, source: Path | None = None) -> dict:
+    spec = general_manifest()
+    source = Path(source).expanduser().resolve() if source is not None else None
+    result = models.acquire_data(public_folder(spec), spec['files'] + [spec['license_file']], source=source)
+    return {**general_status(), 'progress': result['progress']}
+
+
+def general_words() -> tuple[frozenset[str], dict]:
+    """A verified snapshot; an unavailable dictionary disables phonetic checks this time."""
+    try:
+        spec = general_manifest()
+        item = next(f for f in spec['files'] if f['category'] == 'general')
+        status = ensure_general()
+        snapshot = {'id': spec['id'], 'version': spec['version'], 'revision': spec['revision'],
+                    'sha256': item['sha256'], **{k: status[k] for k in ('ready', 'status', 'tell_user')}}
+        if not status['ready']:
+            return frozenset(), snapshot
+        data = models._path(public_folder(spec), item['path']).read_bytes()
+        if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            # The file changed after the status check. Trigger normal repair, but never
+            # use an empty or unverified dictionary as permission to flag unknown words.
+            ensure_general()
+            return frozenset(), {**snapshot, 'ready': False, 'status': 'failed', 'tell_user': GENERAL_FAILED}
+        words = frozenset(line.split()[0] for line in data.decode('utf-8-sig').splitlines() if line.strip())
+        return words, snapshot
+    except (OSError, ValueError, KeyError, StopIteration, models.ModelError) as exc:
+        return frozenset(), {'ready': False, 'status': 'failed', 'reason': str(exc), 'tell_user': GENERAL_FAILED}
 
 
 class PublicLexicon:
@@ -769,9 +830,10 @@ def forget(original: str, root: Path = ROOT, *, delete: bool = False) -> dict:
             'tell_user': f'已{"删除" if delete else "否定"} {count} 条记忆；查询不再推荐，重复学习旧稿不会恢复。'}
 
 
-def query(context: dict, root: Path = ROOT, *, at: str | None = None, limit: int = 50) -> dict:
+def query(context: dict, root: Path = ROOT, *, at: str | None = None, limit: int | None = 50,
+          public: PublicLexicon | None = None) -> dict:
     state, rows = _state(root), []
-    public = PublicLexicon(auto_download=True)
+    public = public if public is not None else PublicLexicon(auto_download=True)
     for word in state['words'].values():
         score = max((relevance(context, origin.get('context') or {
             'title': word['note'], 'description': origin['source']}, word['word']) for origin in word['origins']), default=0)
@@ -785,7 +847,7 @@ def query(context: dict, root: Path = ROOT, *, at: str | None = None, limit: int
         if score > 0:
             rows.append({'kind': 'memory', **memory, 'score': memory_weight(memory, context, at or now())})
     rows.sort(key=lambda x: (-x['score'], x['kind'], x.get('word', x.get('original', '')), x.get('replacement', '')))
-    return {'status': 'ready', 'context': context_for(context), 'results': rows[:max(0, limit)],
+    return {'status': 'ready', 'context': context_for(context), 'results': rows if limit is None else rows[:max(0, limit)],
             'tell_user': '已按上下文列出相关词条与纠错记忆，仅供提示。' + ('' if public.status['ready'] else public.status['tell_user'])}
 
 
@@ -801,14 +863,19 @@ def add_parser(sub) -> None:
     for name, help_text in [('status', '查看公开词库状态'), ('download', '前台下载并校验公开词库'),
                             ('list', '列出个人词条'), ('learn', '学习已登记校对稿和知识库标题'),
                             ('memories', '列出全部纠错记忆')]:
-        commands.add_parser(name, help=help_text)
+        command = commands.add_parser(name, help=help_text)
+        if name in {'status', 'download'}:
+            command.add_argument('--dictionary', choices=('thuocl', 'jieba'), default='thuocl', help='领域词库或通用词典')
     word = commands.add_parser('add', help='手动添加词条')
     word.add_argument('word')
     word.add_argument('--note', default='', help='词条说明')
     word.add_argument('--source', default='', help='来源校对任务或视频')
     commands.add_parser('remove', help='移除个人词条').add_argument('word')
     for name, help_text in [('import', '复制并导入 UTF-8 词表'), ('import-public', '手动导入公开词库文件夹')]:
-        commands.add_parser(name, help=help_text).add_argument('file', type=Path)
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument('file', type=Path)
+        if name == 'import-public':
+            command.add_argument('--dictionary', choices=('thuocl', 'jieba'), default='thuocl', help='领域词库或通用词典')
     forget_parser = commands.add_parser('forget', help='否定或删除原文片段的纠错记忆')
     forget_parser.add_argument('original')
     forget_parser.add_argument('--delete', action='store_true', help='删除记忆，保留防止重复学习的标记')
@@ -825,9 +892,10 @@ def add_parser(sub) -> None:
 def dispatch(args, root: Path = ROOT) -> dict:
     command = args.lexicon_command
     if command == 'status':
-        return public_status()
+        return general_status() if args.dictionary == 'jieba' else public_status()
     if command in {'download', 'import-public'}:
-        return download_public(source=args.file if command == 'import-public' else None)
+        download = download_general if args.dictionary == 'jieba' else download_public
+        return download(source=args.file if command == 'import-public' else None)
     if command == 'add':
         return add(args.word, root, note=args.note, source=args.source)
     if command == 'remove':

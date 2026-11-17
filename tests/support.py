@@ -72,6 +72,10 @@ class WorkspaceCase(unittest.TestCase):
             'ready': False, 'status': 'downloading', 'tell_user': lexicon.DOWNLOADING})
         preparation.start()
         self.addCleanup(preparation.stop)
+        general = patch.object(lexicon, 'ensure_general', return_value={
+            'ready': False, 'status': 'downloading', 'tell_user': lexicon.GENERAL_DOWNLOADING})
+        general.start()
+        self.addCleanup(general.stop)
         self.wav = self.parent / "中文录音.wav"  # user media lives outside the workspace
         with wave.open(str(self.wav), "wb") as handle:
             handle.setparams((1, 2, 16000, 0, "NONE", "not compressed"))

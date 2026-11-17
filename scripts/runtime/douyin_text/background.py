@@ -41,7 +41,11 @@ class Progress:
         self.save()
 
     def save(self):
-        write_json(self.path, self.data)
+        import logging
+        try:
+            write_json(self.path, self.data)
+        except OSError as exc:
+            logging.getLogger(__name__).warning('进度文件写入失败，已跳过本次更新：%s；%s', self.path, exc)
 
     def current(self, job: dict, index: int):
         self.data.update(current_chunk={'id': job['id'], 'index': index + 1},

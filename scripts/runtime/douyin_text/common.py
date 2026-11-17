@@ -57,12 +57,32 @@ def read_json(path: Path):
 
 def write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
-                                     suffix=".tmp", delete=False) as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-        temporary = handle.name
-    os.replace(temporary, path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         suffix=".tmp", delete=False) as handle:
+            temporary = handle.name
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        deadline, delay = None, 0.02
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if os.name != 'nt':
+                    raise
+                current = time.monotonic()
+                if deadline is None:
+                    deadline = current + 2.0
+                remaining = deadline - current
+                if remaining <= 0:
+                    raise
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, 0.25)
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def config(root: Path = ROOT) -> dict:

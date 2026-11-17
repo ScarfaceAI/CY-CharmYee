@@ -1,13 +1,14 @@
 # 词库与纠错记忆
 
-本功能只维护词汇来源和校对记录。纠错记忆只供提示，不能自动替换机器原稿或校对稿；本阶段不生成疑点清单，也不向识别引擎传热词。成语表通过已有的 `numbers.apply(extra_exceptions=...)` 保护展示文字中的固定说法，数字规则、转换阈值和豆包识别流程保持原样。
+本功能维护词汇来源和校对记录，供[疑点清单](suspects.md)查询。纠错记忆只供提示，不能自动替换机器原稿或校对稿，也不向识别引擎传热词。成语表通过已有的 `numbers.apply(extra_exceptions=...)` 保护展示文字中的固定说法，数字规则、转换阈值和豆包识别流程保持原样。
 
 ## 数据放在哪里
 
 | 数据 | 位置 | 是否随源码和安装包分发 |
 |---|---|---|
-| THUOCL 的固定版本、类别、大小、SHA-256、许可和地址 | `assets/lexicons.json` | 是，仅清单 |
-| 公开词表和上游许可文件 | 模型根目录的 `lexicons/thuocl-<提交哈希>/` | 否，按需下载，多个工作区共用 |
+| THUOCL 与 jieba 词典数据的固定版本、类别、大小、SHA-256、许可和地址 | `assets/lexicons.json` | 是，仅清单 |
+| 领域词表和上游许可文件 | 模型根目录的 `lexicons/thuocl-<提交哈希>/` | 否，按需下载，多个工作区共用 |
+| 通用词典数据和上游许可文件 | 模型根目录的 `lexicons/jieba-<提交哈希>/` | 否，按需下载，多个工作区共用 |
 | 个人词条、来源、校对事件、计数依据、撤销标记 | 工作区 `.local/lexicon/state.json` | 否，属于个人数据 |
 | 导入词表的原样副本 | 工作区 `.local/lexicon/imports/<文件哈希>.txt` | 否，属于个人数据 |
 | 校对稿与版本快照 | 原有 `runs/<任务>/` 目录 | 否，沿用现有登记机制 |
@@ -19,7 +20,7 @@
 
 ## 公开词库
 
-使用[清华 THUOCL](https://github.com/thunlp/THUOCL/tree/a30ce79d895d01ab5132a5c74c29703ff7efb4cc)，固定提交 `a30ce79d895d01ab5132a5c74c29703ff7efb4cc`，MIT 许可全文见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。它是较早的领域词表，覆盖信息技术、财经、地名、饮食、成语等，不是通用词表。缺少某个词不能说明它是错词，也不能据此判断新产品或新术语不存在；判断“是不是普通词”留待下一步引入通用词表。
+使用[清华 THUOCL](https://github.com/thunlp/THUOCL/tree/a30ce79d895d01ab5132a5c74c29703ff7efb4cc)，固定提交 `a30ce79d895d01ab5132a5c74c29703ff7efb4cc`，MIT 许可全文见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。它是较早的领域词表，覆盖信息技术、财经、地名、饮食、成语等，不是通用词表。疑点层另用 [jieba 的通用词典数据](https://github.com/fxsjy/jieba/blob/1e20c89b66f56c9301b0feed211733ffaa1bd72a/jieba/dict.txt)，固定 `v0.42.1` 对应提交 `1e20c89b66f56c9301b0feed211733ffaa1bd72a`，同为 MIT，仅下载约 5 MB 的词典及许可，不安装 jieba 包。缺词不能证明错误，也不能据此判断新产品或新术语不存在。
 
 清单独立放在 `assets/lexicons.json`，因为类别、词频和来源版本不属于模型推理配置。下载共用 `models.py` 的后台进程、进程锁、断点续传、备用源切换、大小与哈希检查及导入暂存机制。各文件提供固定提交的 GitHub Raw 地址和 jsDelivr 备用地址，必须通过同一 SHA-256。
 
@@ -33,9 +34,14 @@ lexicon download
 lexicon import-public "<包含 LICENSE 与 data 子目录的文件夹>"
 lexicon lookup 字节
 lexicon lookup 李白 --category lishimingren
+lexicon status --dictionary jieba
+lexicon download --dictionary jieba
+lexicon import-public "<包含 LICENSE 与 jieba/dict.txt 的文件夹>" --dictionary jieba
 ```
 
-手动导入保留官方结构：根目录为 `LICENSE`，`data/` 下为清单中的 11 个原始 TXT 文件。全部校验通过后才安装；不要重存词表，以免换行或编码改变哈希。公开词表不通过个人词表的 `lexicon import` 安装。
+不传 `--dictionary` 时仍操作 THUOCL；`status`、`download`、`import-public` 可用 `--dictionary jieba` 选择通用词典。疑点检查首次需要通用词表时自动启动后台下载，本次跳过同音检查，其他三类照常；就绪后用 `suspects <任务 ID>` 重算。失败不自动反复重试，显式 `download` 可重试，`status` 只读状态。
+
+手动导入保留官方结构：THUOCL 的根目录为 `LICENSE`，`data/` 下为清单中的 11 个原始 TXT 文件；jieba 为根目录的 `LICENSE` 与 `jieba/dict.txt`。全部校验通过后才安装；不要重存词表，以免换行或编码改变哈希。公开词表不通过个人词表的 `lexicon import` 安装。
 
 | 类别标识 | 内容 |
 |---|---|

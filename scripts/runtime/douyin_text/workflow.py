@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers, lexicon
+from . import acquisition, asr, credentials, media, local_asr, background, processes, numbers, lexicon, suspects
 from .common import ROOT, ArtifactBusyError, artifact_lock, config, digest, inside, now, read_json, relative, write_json
 
 PURPOSES = {"transcribe": "只转写", "analyze": "总结／分析", "ingest": "原文留底与校对稿入库", "compile": "入库并编译", "rewrite": "口播改写"}
@@ -63,6 +63,60 @@ def relocate(task: dict, root: Path = ROOT) -> dict:
 
 def save(task: dict, root: Path = ROOT) -> None:
     write_json(task_path(task["id"], root), task)
+
+
+def suspect_summary(task: dict, root: Path = ROOT) -> dict:
+    if not task.get('results'):
+        return task
+    previous = task.get('suspects', {}).get('tell_user', '')
+    notice = task.get('tell_user', '')
+    if previous:
+        notice = notice.replace(previous, '')
+    counts = dict.fromkeys(suspects.LABELS, 0)
+    notices = set()
+    ready = 0
+    for item in task['results']:
+        old_notice = item.get('suspects', {}).get('tell_user', '')
+        if old_notice:
+            notice = notice.replace(old_notice, '')
+        saved = suspects.read_summary(inside(root, item['result']), root)
+        item['suspects'] = saved
+        if saved['status'] == 'ready':
+            ready += 1
+            notices.update(saved.get('notices', []))
+            for kind in counts:
+                counts[kind] += saved['counts'][kind]
+    missing = len(task['results']) - ready
+    message = suspects.summary(counts) if ready else ''
+    if len(task['results']) > 1 and message:
+        message = message.replace('这条稿子', f'已检查的 {ready} 条稿子合计')
+    if missing:
+        message += f'有 {missing} 条稿子的疑点清单尚未生成或已过期，可用 suspects {task["id"]} 重算。'
+    message += ''.join(sorted(notices))
+    task['suspects'] = {'counts': counts, 'total': sum(counts.values()), 'ready': ready,
+                        'missing': missing, 'tell_user': message}
+    task['tell_user'] = notice + message
+    return task
+
+
+def show(task_id: str, root: Path = ROOT) -> dict:
+    return suspect_summary(load(task_id, root), root)
+
+
+def recalculate_suspects(task_id: str, root: Path = ROOT) -> dict:
+    from . import content
+    with background.task_lock(task_id, root):
+        registered = background.record(task_id, root)
+        if registered.get('background') and processes.alive(registered):
+            raise ValueError('本任务仍在识别，请完成或取消后再重算疑点。')
+        task = load(task_id, root)
+        originals = content.originals(task, root)
+        vocabulary = suspects.Vocabulary(root)
+        for item, result in zip(task['results'], originals):
+            item['suspects'] = suspects.generate(inside(root, item['result']), result['source'], vocabulary, root)
+        suspect_summary(task, root)
+        save(task, root)
+        return task
 
 
 def plan(values: list[str], root: Path = ROOT) -> dict:
@@ -197,7 +251,11 @@ def write_result(result: dict, output: Path, root: Path, *, status='transcribed'
     result['output_sha256'] = {suffix: digest(output / ('transcript.' + suffix)) for suffix in ('md', 'txt')}
     write_json(output / 'result.json', result)
     notice = lexicon.display_notice(result)
-    return {**({'tell_user': notice} if notice else {}),
+    hints = {}
+    if result.get('engine') == local_asr.ENGINE:
+        hints = suspects.generate(output / 'result.json', result['source'], suspects.Vocabulary(root), root)
+        notice = (notice or '') + hints['tell_user']
+    return {**({'tell_user': notice} if notice else {}), **({'suspects': hints} if hints else {}),
             'id': result['source']['id'], 'status': status, 'result': relative(root, output / 'result.json'),
             'markdown': relative(root, output / 'transcript.md'), 'text': relative(root, output / 'transcript.txt')}
 
@@ -270,6 +328,7 @@ def cached_result(job: dict, task: dict, root: Path) -> dict | None:
             raise RuntimeError('已有原稿被修改，保留现场；请明确要求重新转写以另存新版本')
     notice = lexicon.display_notice(result)
     return {**({'tell_user': notice} if notice else {}),
+            'suspects': suspects.read_summary(result_path, root),
             'id': job['id'], 'status': 'reused', 'result': relative(root, result_path),
             'markdown': relative(root, output / 'transcript.md'), 'text': relative(root, output / 'transcript.txt')}
 
@@ -445,13 +504,13 @@ def run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous_
     engine = config(root)['asr_engine'] if task.get('asr_pending') else engine_for(task)
     options = dict(retry_evidence=retry_evidence, anonymous_only=anonymous_only, saved_scope=saved_scope)
     if engine != 'local' or task.get('input_kind') == 'text':
-        return _run(task_id, root, **options)
+        return suspect_summary(_run(task_id, root, **options), root)
     try:
         with background.task_lock(task_id, root):
             registered = background.record(task_id, root)
             if registered.get('background') and processes.alive(registered):
                 return background.status(task_id, root)
-            return _run(task_id, root, **options)
+            return suspect_summary(_run(task_id, root, **options), root)
     except ArtifactBusyError:
         result = background.status(task_id, root)
         result.setdefault('tell_user', '本任务已经在运行或准备中，未重复启动；可用 status 查看进度。')
@@ -670,6 +729,8 @@ def _run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous
                 failure.get('stage') == 'cache' for failure in task['failures']) else 'failed'
         else:
             task["status"] = "awaiting_review"
+        if engine_for(task) == 'local':
+            suspect_summary(task, root)
         save(task, root)
         if task["status"] == "ready_to_publish":
             from .vault import publish

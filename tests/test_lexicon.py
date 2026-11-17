@@ -20,9 +20,7 @@ from douyin_text.common import digest, read_json, write_json
 
 class LexiconTests(unittest.TestCase):
     def setUp(self):
-        base = SKILL_ROOT / '.scratch/m1-lexicon'
-        base.mkdir(parents=True, exist_ok=True)
-        self.temporary = tempfile.TemporaryDirectory(dir=base, prefix='test-')
+        self.temporary = tempfile.TemporaryDirectory(prefix='cy-lexicon-')
         self.addCleanup(self.temporary.cleanup)
         self.parent = Path(self.temporary.name).resolve()
         self.root = self.parent / 'workspace'
@@ -656,6 +654,146 @@ class LexiconTests(unittest.TestCase):
         with patch.object(lexicon, 'learn_registered', side_effect=AssertionError('口播不学习')):
             content.register_content(task['id'], [file], 'spoken', self.root, evidence='改成口播')
         self.assertEqual([], lexicon.memories(self.root))
+
+
+class GeneralLexiconTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='cy-general-')
+        self.addCleanup(self.temporary.cleanup)
+        self.parent = Path(self.temporary.name).resolve()
+        self.enterContext(patch.dict(os.environ, {'CY_MODEL_DIR': str(self.parent / 'models'),
+                                                'CY_STATE_DIR': str(self.parent / 'state')}))
+        self.manifest = self.parent / 'lexicons.json'
+        self.data = read_json(lexicon.MANIFEST)
+        self.spec = self.data['general']
+        self.payloads = {'jieba/dict.txt': '对峙 20 n\n激发 40 v\n元气 30 n\n对峙 20 n\n'.encode(),
+                         'LICENSE': b'MIT fixture license\n'}
+        for file in self.spec['files'] + [self.spec['license_file']]:
+            data = self.payloads[file['path']]
+            file.update(size=len(data), sha256=hashlib.sha256(data).hexdigest(), sources=['http://127.0.0.1:1/' + file['path']])
+        write_json(self.manifest, self.data)
+        self.enterContext(patch.object(lexicon, 'MANIFEST', self.manifest))
+
+    def import_folder(self):
+        folder = self.parent / 'import'
+        for name, data in self.payloads.items():
+            target = folder / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        return folder
+
+    def test_pinned_sources_and_manual_import_checks_all_bytes(self):
+        with patch.object(lexicon, 'MANIFEST', SKILL_ROOT / 'assets/lexicons.json'):
+            actual = lexicon.general_manifest()
+        self.assertEqual('jieba', actual['id'])
+        self.assertEqual('0.42.1', actual['version'])
+        self.assertEqual('MIT', actual['license'])
+        for file in actual['files'] + [actual['license_file']]:
+            self.assertEqual(2, len(file['sources']))
+            self.assertTrue(all(actual['revision'] in url for url in file['sources']))
+        source = self.import_folder()
+        self.assertTrue(lexicon.download_general(source=source)['ready'])
+        words, status = lexicon.general_words()
+        self.assertTrue(status['ready'])
+        self.assertEqual(frozenset({'对峙', '激发', '元气'}), words)
+        installed = lexicon.public_folder(self.spec) / 'jieba/dict.txt'
+        before = digest(installed)
+        (source / 'LICENSE').write_bytes(b'bad')
+        with self.assertRaises(models.ModelError):
+            lexicon.download_general(source=source)
+        self.assertEqual(before, digest(installed))
+
+    def test_mirror_fallback_resumes_and_reuses_verified_dictionary(self):
+        requests = []
+        routes = {'/' + name: data for name, data in self.payloads.items()}
+        with server(routes, requests) as url:
+            for file in self.spec['files'] + [self.spec['license_file']]:
+                file['sources'] = [url + '/missing', url + '/' + file['path']]
+            write_json(self.manifest, self.data)
+            partial = models._part(lexicon.public_folder(self.spec), self.spec['files'][0])
+            partial.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_bytes(self.payloads['jieba/dict.txt'][:7])
+            result = lexicon.download_general()
+            self.assertTrue(result['ready'])
+            self.assertIn(('/jieba/dict.txt', 'bytes=7-'), requests)
+            self.assertEqual(2, len(result['progress']['errors']))
+            count = len(requests)
+            self.assertTrue(lexicon.download_general()['ready'])
+            self.assertEqual(count, len(requests))
+
+    def test_missing_starts_background_once_and_words_become_available_after_download(self):
+        requests, children = [], []
+        entered, release = threading.Event(), threading.Event()
+
+        def held(handler):
+            entered.set()
+            release.wait(5)
+            handler.send_response(200)
+            handler.end_headers()
+            handler.wfile.write(self.payloads['jieba/dict.txt'])
+
+        routes = {'/jieba/dict.txt': held, '/LICENSE': self.payloads['LICENSE']}
+        launch = models._launch
+
+        def captured(*args, **kwargs):
+            child = launch(*args, **kwargs)
+            children.append(child)
+            return child
+
+        with server(routes, requests) as url:
+            for file in self.spec['files'] + [self.spec['license_file']]:
+                file['sources'] = [url + '/' + file['path']]
+            write_json(self.manifest, self.data)
+            try:
+                with patch.object(models, '_launch', side_effect=captured) as start:
+                    self.assertFalse(lexicon.general_status()['ready'])
+                    start.assert_not_called()
+                    words, status = lexicon.general_words()
+                    self.assertFalse(status['ready'])
+                    self.assertEqual(frozenset(), words)
+                    self.assertIn('跳过同音疑点', status['tell_user'])
+                    self.assertTrue(entered.wait(3))
+                    words, status = lexicon.general_words()
+                    self.assertFalse(status['ready'])
+                    self.assertEqual(1, start.call_count)
+                    release.set()
+                    children[0].wait(timeout=5)
+                    words, status = lexicon.general_words()
+                    self.assertTrue(status['ready'])
+                    self.assertIn('对峙', words)
+                    self.assertEqual(1, start.call_count)
+            finally:
+                release.set()
+                for child in children:
+                    child.wait(timeout=5)
+
+    def test_failed_download_is_not_restarted_and_bad_read_never_becomes_empty_ready_table(self):
+        with patch.object(models, '_launch', side_effect=OSError('测试下载启动失败')) as start:
+            for _ in range(2):
+                words, status = lexicon.general_words()
+                self.assertEqual(frozenset(), words)
+                self.assertFalse(status['ready'])
+                self.assertIn('--dictionary jieba', status['tell_user'])
+            self.assertEqual(1, start.call_count)
+        self.assertTrue(lexicon.download_general(source=self.import_folder())['ready'])
+        installed = lexicon.public_folder(self.spec) / 'jieba/dict.txt'
+        installed.write_bytes(b'corrupt')
+        with patch.object(lexicon, 'ensure_general', return_value={
+                'ready': True, 'status': 'ready', 'tell_user': '测试读取前状态'}) as repair:
+            words, status = lexicon.general_words()
+        self.assertEqual(frozenset(), words)
+        self.assertFalse(status['ready'])
+        self.assertEqual(2, repair.call_count)
+
+    def test_general_dictionary_cli_keeps_existing_thuocl_default(self):
+        for arguments, function in [(['status', '--dictionary', 'jieba'], 'general_status'),
+                                    (['download', '--dictionary', 'jieba'], 'download_general'),
+                                    (['import-public', str(self.parent), '--dictionary', 'jieba'], 'download_general'),
+                                    (['status'], 'public_status'), (['download'], 'download_public')]:
+            with self.subTest(arguments=arguments), patch.object(lexicon, function, return_value={}) as call:
+                args = cli.parser().parse_args(['lexicon', *arguments])
+                lexicon.dispatch(args, self.parent)
+                call.assert_called_once()
 
 
 if __name__ == '__main__':

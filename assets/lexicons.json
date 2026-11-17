@@ -158,5 +158,38 @@
       "label": "诗词",
       "entries": 13703
     }
-  ]
+  ],
+  "general": {
+    "schema_version": 1,
+    "id": "jieba",
+    "version": "0.42.1",
+    "repository": "https://github.com/fxsjy/jieba",
+    "revision": "1e20c89b66f56c9301b0feed211733ffaa1bd72a",
+    "license": "MIT",
+    "files": [
+      {
+        "path": "jieba/dict.txt",
+        "size": 5071852,
+        "sha256": "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8",
+        "license": "MIT",
+        "sources": [
+          "https://raw.githubusercontent.com/fxsjy/jieba/1e20c89b66f56c9301b0feed211733ffaa1bd72a/jieba/dict.txt",
+          "https://cdn.jsdelivr.net/gh/fxsjy/jieba@1e20c89b66f56c9301b0feed211733ffaa1bd72a/jieba/dict.txt"
+        ],
+        "category": "general",
+        "label": "通用词表",
+        "entries": 349046
+      }
+    ],
+    "license_file": {
+      "path": "LICENSE",
+      "size": 1075,
+      "sha256": "18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37",
+      "license": "MIT",
+      "sources": [
+        "https://raw.githubusercontent.com/fxsjy/jieba/1e20c89b66f56c9301b0feed211733ffaa1bd72a/LICENSE",
+        "https://cdn.jsdelivr.net/gh/fxsjy/jieba@1e20c89b66f56c9301b0feed211733ffaa1bd72a/LICENSE"
+      ]
+    }
+  }
 }

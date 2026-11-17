@@ -38,6 +38,7 @@ license: MIT
 
 - 媒体获取、识别、状态、续跑和付费重试：读[运行命令与状态](references/runtime.md)。
 - 文稿校对、字幕、口播改写及批量交付：读[文稿协作与交付](references/content.md)；需要音画核查时再读[实际能力校对](references/review-capabilities.md)。
+- 校对必做：只检查[疑点清单](references/suspects.md)、人名数字术语、纠错记忆命中这三类地方，有依据才改；所有改动逐项列成“原文 → 改后”，通顺且无疑点的句子保持原样。
 - 主页内容分析、视觉核对或独立下载：读[博主任务指南](references/creator.md)。
 - 个人知识库方向建档、持续访谈和续办：读[个人知识库](references/personal-vault.md)。各相关任务先按套件规则检查 kb context，已开启范围内主动查资料和保存成果，尊重本次不保存与暂停。
 - 明确要求或已开启范围内的归档与编译：读[知识库指南](references/knowledge.md)，并遵守目标库现行规则与入口。

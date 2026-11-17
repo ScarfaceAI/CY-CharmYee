@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 import support
 from support import WorkspaceCase, read_json, write_json
 from test_local_asr import recognized
-from douyin_text import asr, background, cli, local_asr, local_asr_worker, media, processes, workflow
+from douyin_text import asr, background, cli, common, local_asr, local_asr_worker, media, processes, workflow
 from douyin_text.common import ArtifactBusyError
 
 
@@ -285,7 +285,11 @@ class BackgroundASRTests(WorkspaceCase):
         task = self.task()
         helper = self.root / 'fake-background.py'
         helper.write_text('''import runpy, sys, time
-from douyin_text import local_asr
+from douyin_text import local_asr, lexicon
+# Parent-process mocks do not cross the real subprocess boundary. Keep this
+# handoff fixture offline, including the display layer's lexicon preparation.
+lexicon.ensure_public = lambda: {'ready': False, 'status': 'downloading', 'tell_user': lexicon.DOWNLOADING}
+lexicon.ensure_general = lambda: {'ready': False, 'status': 'downloading', 'tell_user': lexicon.GENERAL_DOWNLOADING}
 class FakeWorker:
     def __init__(self, *args): self.on_progress = None
     def recognize(self, *args):
@@ -335,10 +339,29 @@ runpy.run_module('douyin_text.background', run_name='__main__')
         for alive in (False, True):  # The normal outcome also wins while the process is still closing.
             with self.subTest(alive=alive), patch.object(processes, 'alive', return_value=alive):
                 self.assertEqual(done, background.status(task['id'], self.root))
+
         done.update(status='failed', tell_user='识别失败，请查看分片错误。')
         workflow.save(done, self.root)
         with patch.object(processes, 'alive', return_value=False):
             self.assertEqual(done, background.status(task['id'], self.root))
+
+    def test_progress_write_failure_logs_and_recognition_still_completes(self):
+        self.configure(asr_background_threshold_seconds=10000)
+        task = self.task()
+
+        def refuse_progress(path, value):
+            if path.name == 'asr-progress.json':
+                raise PermissionError('测试进度文件持续被占用')
+            return write_json(path, value)
+
+        with patch.object(background, 'write_json', side_effect=refuse_progress), \
+             self.assertLogs('douyin_text.background', level='WARNING') as logs:
+            done = workflow.run(task['id'], self.root)
+        self.assertEqual('awaiting_review', done['status'], done.get('failures'))
+        self.assertEqual([], done['failures'])
+        self.assertEqual(4, self.worker.recognize.call_count)
+        self.assertEqual('这是本地测试原文。\n' * 4, (self.root / done['results'][0]['text']).read_text(encoding='utf-8'))
+        self.assertTrue(any('进度文件写入失败' in line and 'asr-progress.json' in line for line in logs.output))
 
     def test_status_preserves_background_waiting_model_outcome(self):
         self.configure(asr_background_threshold_seconds=0)
@@ -454,4 +477,64 @@ runpy.run_module('douyin_text.background', run_name='__main__')
              patch.object(background.time, 'sleep'):
             with self.assertRaisesRegex(RuntimeError, '启动握手未完成'):
                 background.child_identity(child, path, 'token')
+
+class JsonWriteTests(WorkspaceCase):
+    def clock(self):
+        ticks, delays = [0.0], []
+
+        def sleep(delay):
+            delays.append(delay)
+            ticks[0] += delay
+
+        return SimpleNamespace(monotonic=lambda: ticks[0], sleep=sleep), delays
+
+    def test_windows_permission_errors_retry_then_atomically_replace(self):
+        path = self.root / 'state.json'
+        write_json(path, {'old': True})
+        replace = Mock(side_effect=[PermissionError('占用'), PermissionError('占用'), None])
+        actual_replace = os.replace
+
+        def attempt(source, target):
+            replace(source, target)
+            actual_replace(source, target)
+
+        clock, delays = self.clock()
+        with patch.object(common, 'os', SimpleNamespace(name='nt', replace=attempt)), patch.object(common, 'time', clock):
+            write_json(path, {'new': True})
+        self.assertEqual(3, replace.call_count)
+        self.assertEqual([.02, .04], delays)
+        self.assertEqual({'new': True}, read_json(path))
+        self.assertEqual([], list(self.root.glob('*.tmp')))
+
+    def test_windows_persistent_denial_is_bounded_and_cleans_temporary(self):
+        path = self.root / 'state.json'
+        write_json(path, {'old': True})
+        clock, delays = self.clock()
+        replace = Mock(side_effect=PermissionError('持续占用'))
+        with patch.object(common, 'os', SimpleNamespace(name='nt', replace=replace)), patch.object(common, 'time', clock):
+            with self.assertRaisesRegex(PermissionError, '持续占用'):
+                write_json(path, {'new': True})
+        self.assertGreater(replace.call_count, 1)
+        self.assertLessEqual(sum(delays), 2.0)
+        self.assertAlmostEqual(2.0, sum(delays))
+        self.assertTrue(all(a <= b for a, b in zip(delays[:-2], delays[1:-1])))
+        self.assertEqual({'old': True}, read_json(path))
+        self.assertEqual([], list(self.root.glob('*.tmp')))
+
+    def test_non_windows_permission_error_and_other_errors_do_not_retry(self):
+        for platform, error in [('posix', PermissionError('拒绝')), ('nt', OSError('磁盘失败'))]:
+            with self.subTest(platform=platform, error=error):
+                clock, delays = self.clock()
+                replace = Mock(side_effect=error)
+                with patch.object(common, 'os', SimpleNamespace(name=platform, replace=replace)), patch.object(common, 'time', clock):
+                    with self.assertRaises(type(error)):
+                        write_json(self.root / 'failed.json', {})
+                self.assertEqual(1, replace.call_count)
+                self.assertEqual([], delays)
+                self.assertEqual([], list(self.root.glob('*.tmp')))
+
+    def test_serialization_failure_also_cleans_temporary(self):
+        with self.assertRaises(TypeError):
+            write_json(self.root / 'invalid.json', {'invalid': object()})
+        self.assertEqual([], list(self.root.glob('*.tmp')))
 

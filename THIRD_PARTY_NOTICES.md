@@ -18,6 +18,19 @@ The MIT license at the repository root applies to this project's own code and do
 
 Exact Python package versions are pinned in `scripts/runtime/requirements.lock.txt`.
 
+## 识别后的疑点检查依赖
+
+这些组件只在识别后使用。pypinyin 由安装器按锁定版本安装；jieba 只使用词典数据，按需下载，不安装其 Python 包，也不随源码 ZIP 或安装包分发词典。未加载额外的 `pypinyin-dict`。
+
+| 组件 | 用途 | 固定版本、来源与许可 |
+|---|---|---|
+| pypinyin | 同音候选的拼音转换，仅忽略声调 | `0.55.0`；[官方项目](https://github.com/mozillazg/python-pinyin/tree/v0.55.0)、[发行包](https://pypi.org/project/pypinyin/0.55.0/)、[MIT 许可](https://github.com/mozillazg/python-pinyin/blob/v0.55.0/LICENSE.txt)，版权方为 mozillazg、闲耘。随包单字与词组数据分别来自 [pinyin-data](https://github.com/mozillazg/pinyin-data) 和 [phrase-pinyin-data](https://github.com/mozillazg/phrase-pinyin-data)，两者上游均声明 MIT。 |
+| jieba 词典数据 | 判断通用词，并切分本视频上下文中的候选词 | `v0.42.1` 对应固定提交 `1e20c89b66f56c9301b0feed211733ffaa1bd72a`；[词典原文件](https://raw.githubusercontent.com/fxsjy/jieba/1e20c89b66f56c9301b0feed211733ffaa1bd72a/jieba/dict.txt)、[MIT 许可](https://github.com/fxsjy/jieba/blob/1e20c89b66f56c9301b0feed211733ffaa1bd72a/LICENSE)，版权方为 Sun Junyi。下载时同取上游 `LICENSE`；不使用其分词器或缓存。 |
+
+词典 `jieba/dict.txt` 为 5,071,852 字节，SHA-256 为 `7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8`；许可文件为 1,075 字节，SHA-256 为 `18ba0984839f85853b29fadaf992f7dba8fd0ca0fbeae34de2b8735222dc7a37`。固定来源、GitHub Raw 与 jsDelivr 备用地址见 [assets/lexicons.json](assets/lexicons.json)，下载、校验与手动导入共用公开词库机制。
+
+pypinyin 的词组表用于处理读音，不能兼任完整通用词表。jieba 词典覆盖更广但版本较早，缺词不等于错词；疑点必须同时满足候选和上下文约束，使用方式见[疑点清单](references/suspects.md)。
+
 ## 本地识别运行依赖
 
 这些依赖由安装器按锁定版本单独安装，不将其二进制文件加入本项目安装 ZIP，也不适用本项目的 MIT 许可。

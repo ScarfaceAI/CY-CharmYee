@@ -113,6 +113,8 @@ $dyRun = '<skill>\scripts\invoke.ps1'
 
 后台主进程和识别子进程均为低优先级、无窗口。主进程尝试脱离宿主作业对象；宿主拒绝时，状态的 `background.job_breakaway` 为 `false`，`background_warning` 和 `tell_user` 如实说明后台可能随宿主退出。日志在任务目录的 `background.log`、`local-asr.log`，进程身份和进度分别在 `asr-run.json`、`asr-progress.json`。这些记录属于工作目录，不打包进源码或安装包。
 
+Windows 写入 JSON 时，若原子替换短暂被拒绝，会递增退避重试，最长约 2 秒；最终失败仍抛出并清理临时文件。进度文件仅供 `status` 查看，写入失败会记警告并跳过本次更新，识别照常继续；其他结果与状态文件仍按原流程处理失败。
+
 同一模型根目录共用操作系统级文件锁，锁文件沿用 `.qwen3-asr-0.6b-int8.lock`，也与模型下载、导入和删除互斥。各工作区默认共用模型根目录，因此同一时间只有一个本地识别进程工作；配置 `CY_MODEL_DIR` 时，各会话应指向同一根目录以保持互斥。锁占用时输出中文排队提示；`asr_queue_timeout_seconds` 默认为 600 秒，可设为不小于 0 的有限秒数。超时只报错，不丢弃已完成分片；再运行即可继续。进程退出会由操作系统释放锁，不靠删除锁文件恢复。
 
 本地 `run` 只要还有作品没有可用的缓存结果，就在准备音轨、估算耗时和转入后台之前检查模型。模型未就绪时，自动启动或续接 `models download` 后台下载，任务直接返回 `waiting_model`，包含中文 `tell_user`、`model_status` 和下载进度，不提取音轨、不启动后台识别；已有下载继续复用。所有作品都有可用缓存结果时，直接复用，不检查模型、不触发下载。模型就绪后再次 `run`，沿原任务继续。`doctor` 将 `sherpa_onnx` 实际导入是否成功列入依赖检查；模型有没有下载仍只作信息展示，不影响整体依赖状态。模型路径选择和导入方法见上一节。
@@ -207,7 +209,7 @@ $dyRun = '<skill>\scripts\invoke.ps1'
 
 ## Agent 接力
 
-run 完成识别／导入后进入 `awaiting_review`。先读 task.results 的全部相关正文，找出数字、专名和内容冲突等疑点，按[当前会话的实际能力](review-capabilities.md)针对需要的范围用 `prepare-review` 准备材料并实际完成校对；用户明确只看已有材料时加 `--cached-only`，缺失则报告，不联网补取。另存每条正文文件，再依 results 顺序传递多个 `--file`。准备材料不会调用 ASR 或登记完成状态：
+run 完成识别／导入后进入 `awaiting_review`。本地新结果自动生成[疑点清单](suspects.md)，`run`、`show` 返回 `results[].suspects` 的文件路径与各类数量，任务级 `suspects` 汇总计数；旧结果可用 `suspects <task>` 补算。先读清单和相关正文，按总入口校对边界及[当前会话的实际能力](review-capabilities.md)，针对需要的范围用 `prepare-review` 准备材料并实际完成校对；用户明确只看已有材料时加 `--cached-only`，缺失则报告，不联网补取。另存每条正文文件，再依 results 顺序传递多个 `--file`。准备材料不会调用 ASR 或登记完成状态：
 
 ```powershell
 & $dyRun register-review <task> --file '<校对1.txt>' --file '<校对2.txt>'
