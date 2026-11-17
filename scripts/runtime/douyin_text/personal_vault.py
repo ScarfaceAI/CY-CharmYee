@@ -5,6 +5,7 @@ those decisions, enforces their scope, and never treats a prepared file as saved
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -40,6 +41,7 @@ LABELS = dict(zip(FIELDS, ('背景', '当前目标', '协作偏好', '称呼', '
                           '学习目标', '已有基础', '学习方式', '学习进展')))
 PROFILE = '生活/个人档案/基本资料.md'
 LEGACY_PROFILE = '个人/档案/基本资料.md'
+PROFILE_SUPPLEMENT = '生活/个人档案/补充资料.md'
 ROLES = {'source', 'reviewed', 'draft', 'knowledge', 'profile', 'learning'}
 HOOK_START, HOOK_END = '<!-- cy-vault:context:start -->', '<!-- cy-vault:context:end -->'
 INDEX_START, INDEX_END = '<!-- cy-vault:index:start -->', '<!-- cy-vault:index:end -->'
@@ -164,6 +166,79 @@ def indexed_files(vault):
     return found
 
 
+def external_profile(value):
+    profile = Path(value['profile_entry']).resolve()
+    return profile if not profile.is_relative_to(Path(value['vault_root']).resolve()) else None
+
+
+def guard_profile_write(value, path):
+    """Check resolved destinations, including aliases used by indexes and publishers."""
+    external = external_profile(value) if value.get('profile_entry') else None
+    if external is None:
+        return
+    resolved = path.resolve()
+    if resolved == external or (resolved.is_file() and external.is_file() and resolved.samefile(external)):
+        raise ValueError('外部画像只读，承意不会写入：' + str(external) + '；新情况请用 kb answer 保存到库内补充资料。')
+    vault = Path(value['vault_root'])
+    internal = value.get('internal_profile_entry')
+    frozen = [vault / PROFILE, vault / LEGACY_PROFILE]
+    if internal:
+        frozen.append(Path(internal))
+    if resolved in {path.resolve() for path in frozen}:
+        raise ValueError('已登记外部画像，库内原档案保留不动；新情况请写入补充资料。')
+
+
+def validate_profile(root, vault, profile, *, external_only=False):
+    from .vault_migration import _is_reparse
+    path = profile.expanduser().absolute()
+    if any(_is_reparse(part) for part in (path, *path.parents)):
+        raise ValueError('画像路径不能包含软链接或目录联接。')
+    path = path.resolve()
+    if path.is_relative_to(root.resolve()):
+        raise ValueError('外部画像不能位于承意工作区内。')
+    if path.is_relative_to(vault.resolve()):
+        if external_only:
+            raise ValueError('--external 需要知识库外的已有画像文件。')
+    elif not path.is_file():
+        raise ValueError('外部画像文件不存在或不是普通文件。')
+    return path
+
+
+def set_profile(value, path, evidence):
+    previous = value.get('profile_entry')
+    if previous == str(path):
+        return
+    if previous and external_profile(value) is None:
+        value['internal_profile_entry'] = previous
+        value['internal_profile_sha256'] = value.get('profile_sha256', '-')
+    value.update(profile_entry=str(path), profile_sha256=file_hash(path))
+    value.setdefault('profile_changes', []).append({'before': previous, 'after': str(path),
+                                                   'evidence': evidence, 'at': now()})
+
+
+def configure_profile(root=ROOT, *, external=None, none=False, evidence=''):
+    value = require(root, collection=False)
+    if not evidence.strip():
+        raise ValueError('登记、更换或取消画像需要用户实际原话作为 evidence。')
+    if (external is not None) == bool(none):
+        raise ValueError('请选择 --external 或 --none 其中一项。')
+    vault = Path(value['vault_root'])
+    if external is not None:
+        path = validate_profile(root, vault, external, external_only=True)
+        guard_profile_write({**value, 'profile_entry': str(path)}, Path(value['hook']['file']))
+        set_profile(value, path, evidence)
+    elif external_profile(value) is not None:
+        path = Path(value.get('internal_profile_entry') or
+                    (vault / LEGACY_PROFILE if (vault / LEGACY_PROFILE).is_file() else vault / PROFILE))
+        path, projected_hash, _ = current_reference(value, path.relative_to(vault).as_posix(),
+                                                    value.get('internal_profile_sha256'))
+        set_profile(value, path, evidence)
+        if projected_hash is not None:
+            value['profile_sha256'] = projected_hash
+    save(value, root)
+    return status(root)
+
+
 def _plain_target_path(value, target):
     if target == '@profile':
         return Path(value['profile_entry'])
@@ -198,6 +273,16 @@ def target_path(value, target):
     return current_reference(value, target)[0]
 
 
+def write_target_path(value, target):
+    if target == '@profile':
+        # Old external transactions must not follow a newly selected profile.
+        raise ValueError('外部画像只读，旧 @profile 写入不能续办；请用 kb answer 保存到库内补充资料。')
+    guard_profile_write(value, Path(value['vault_root']) / target)
+    path = target_path(value, target)
+    guard_profile_write(value, path)
+    return path
+
+
 def current_rows(value, rows):
     result = []
     for row in rows:
@@ -207,11 +292,15 @@ def current_rows(value, rows):
 
 
 def profile_reference(value):
-    profile = Path(value['profile_entry'])
-    vault = Path(value['vault_root'])
+    profile = Path(value['profile_entry']).resolve()
+    vault = Path(value['vault_root']).resolve()
     if profile.is_relative_to(vault):
         return current_reference(value, profile.relative_to(vault).as_posix(), value.get('profile_sha256'))
     return profile, value.get('profile_sha256'), '@profile'
+
+
+def supplement_reference(value):
+    return current_reference(value, PROFILE_SUPPLEMENT, value.get('profile_supplement_sha256', '-'))
 
 
 def has_migrations(value):
@@ -312,6 +401,7 @@ def hook_path(root, scope, host, entry):
 
 
 def install_hook(root, value, path):
+    guard_profile_write(value, path)
     saved = path.read_bytes() if path.exists() else b''
     text = saved.decode('utf-8-sig')
     owner = 'cy-vault-workspace: ' + root.resolve().as_posix()
@@ -351,6 +441,11 @@ def enable(root=ROOT, *, vault, create=False, scope='workspace', host='custom', 
     if previous and previous['vault_root'] != str(vault):
         raise ValueError('本工作区已连接知识库；新库请使用独立工作区以保留原续办状态')
     path = hook_path(root, scope, host, entry)
+    profile_path = validate_profile(root, vault, profile) if profile else None
+    guarded = {**previous, 'vault_root': str(vault)}
+    if profile_path is not None:
+        guarded['profile_entry'] = str(profile_path)
+    guard_profile_write(guarded, path)
     # Fail a conflicting global hook before creating or binding anything.
     if path.is_file():
         body = path.read_text(encoding='utf-8-sig')
@@ -376,15 +471,16 @@ def enable(root=ROOT, *, vault, create=False, scope='workspace', host='custom', 
         focus = canonical_domain(previous['focus'])
     if previous and focus not in modules and modules:
         focus = modules[0]
-    if profile:
-        profile_path = profile.expanduser().resolve()
-    elif previous:
-        profile_path = Path(previous.get('profile_entry', vault / PROFILE))
-    elif (vault / LEGACY_PROFILE).is_file():
-        profile_path = vault / LEGACY_PROFILE
-    else:
-        profile_path = vault / PROFILE
-    value.update(vault_root=str(vault), profile_entry=str(profile_path), scope=scope, host=host,
+    if profile_path is None:
+        if previous:
+            profile_path = Path(previous.get('profile_entry', vault / PROFILE))
+        elif (vault / LEGACY_PROFILE).is_file():
+            profile_path = vault / LEGACY_PROFILE
+        else:
+            profile_path = vault / PROFILE
+    value['vault_root'] = str(vault)
+    set_profile(value, profile_path, evidence)
+    value.update(scope=scope, host=host,
                  modules=modules, pending_domains=[domain for domain in DOMAINS if domain not in modules and domain not in disabled],
                  focus=focus, selected=focus,
                  evidence=evidence, write_mode='local' if local else 'target_rules', rules=rules(vault))
@@ -545,6 +641,7 @@ def stage(manifest, root=ROOT, *, profile=False, explicit_save=False):
     rows = []
     for item in manifest.get('files', []):
         role, target = item.get('role'), item.get('target', '')
+        write_target_path(value, target)
         if role not in ROLES:
             raise ValueError('未知材料 role；可用 source、reviewed、draft、knowledge、learning，个人档案用 answer')
         if role == 'profile' and not profile:
@@ -561,7 +658,7 @@ def stage(manifest, root=ROOT, *, profile=False, explicit_save=False):
             expected = projected_expected
         target = scoped_target(value, module, target, profile=profile,
                                preserve_existing=requested_destination.is_file() or expected != '-')
-        destination = target_path(value, target)
+        destination = write_target_path(value, target)
         vault = Path(value['vault_root'])
         personal_dirs = [vault / label / '个人档案' for label in DOMAIN_DIRS.values()]
         if not profile and (destination in {Path(value['profile_entry']), profile_reference(value)[0]} or
@@ -585,7 +682,12 @@ def stage(manifest, root=ROOT, *, profile=False, explicit_save=False):
     # Identical source/outcome batches reuse verified destinations even across task IDs.
     for old in transactions(root):
         if old['status'] == 'saved' and canonical_domain(old['module']) == module:
+            if profile and any(r['target'] == '@profile' for r in old['files']):
+                continue
             projected = current_rows(value, old['files'])
+            if profile and {r['path'] for r in projected if r['role'] == 'profile'} != {
+                    target_path(value, r['target']) for r in rows if r['role'] == 'profile'}:
+                continue  # Changing profile ownership requires saving at the new destination.
             if old['signature'] != signature and fingerprint(
                     [(row['role'], row['sha256']) for row in projected]) != signature:
                 continue
@@ -627,8 +729,10 @@ def stage(manifest, root=ROOT, *, profile=False, explicit_save=False):
     return record
 
 
-def write_index(vault, catalog):
+def write_index(vault, catalog, *, value=None):
     path = vault / 'index.md'
+    if value:
+        guard_profile_write(value, path)
     previous = path.read_bytes() if path.is_file() else b''
     text = previous.decode('utf-8-sig')
     links = [f"- [{r['target']}]({quote(r['target'], safe='/')}) — {r['role']}" for r in catalog.values()]
@@ -651,6 +755,9 @@ def apply(ident, root=ROOT, *, external=False):
             raise ValueError('知识库目录当前不可用')
         if rules(vault) != value['rules']:
             raise ValueError('知识库规则已改变；Agent 读取后运行 kb rules-reviewed 再续办')
+        for row in record['files']:
+            write_target_path(value, row['target'])
+        guard_profile_write(value, vault / 'index.md')
         historical_projection = record['status'] == 'saved' and has_migrations(value)
         if not external and not historical_projection and (value['write_mode'] != 'local' or any(
                 not target_path(value, row['target']).is_relative_to(vault) for row in record['files'])):
@@ -670,7 +777,7 @@ def apply(ident, root=ROOT, *, external=False):
                         return {**record, 'status': 'awaiting_target_writer', 'historical_status': 'saved',
                                 'error': '先按目标库入口修复当前索引；历史回执未改变'}
                     catalog_path = runtime / 'catalog.json'
-                    write_index(vault, read_json(catalog_path))
+                    write_index(vault, read_json(catalog_path), value=value)
                 return {**record, 'current_verified': True, 'current_files': [
                     {k: row[k] for k in ('target', 'sha256', 'role')} for row in projected]}
             for row in record['files']:
@@ -683,7 +790,7 @@ def apply(ident, root=ROOT, *, external=False):
                     raise ValueError('目标文件已修改，先合并：' + row['target'])
             if not external:
                 for n, row in enumerate(record['files']):
-                    target = target_path(value, row['target'])
+                    target = write_target_path(value, row['target'])
                     if file_hash(target) == row['sha256']:
                         continue
                     if target.is_file():
@@ -692,12 +799,13 @@ def apply(ident, root=ROOT, *, external=False):
                             backup.write_bytes(target.read_bytes())
                     atomic(target, inside(root, row['snapshot']).read_bytes(), row['expected_sha256'])
                 catalog_path = runtime / 'catalog.json'
+                guard_profile_write(value, catalog_path)
                 catalog = read_json(catalog_path) if catalog_path.is_file() else {}
                 for row in record['files']:
                     if row['target'] != '@profile':
                         catalog[row['target']] = {k: row[k] for k in ('target', 'role', 'sha256', 'sources')}
                 write_json(catalog_path, catalog)
-                index_hash = write_index(vault, catalog)
+                index_hash = write_index(vault, catalog, value=value)
             else:
                 index = vault / 'index.md'
                 indexed = indexed_files(vault)
@@ -715,6 +823,9 @@ def apply(ident, root=ROOT, *, external=False):
                 if target_path(value, row['target']) == current_profile:
                     value['profile_entry'] = str(current_profile)
                     value['profile_sha256'] = row['sha256']
+                    save(value, root)
+                elif target_path(value, row['target']) == supplement_reference(value)[0]:
+                    value['profile_supplement_sha256'] = row['sha256']
                     save(value, root)
         return record
     except (OSError, ValueError, RuntimeError) as exc:
@@ -856,9 +967,10 @@ def answer(payload, root=ROOT):
                     'label': branch['label'], 'status': branch['status'], 'updated_at': now(),
                     'question': question}
         save(value, root)
-    profile_path, current_profile_hash, _ = profile_reference(value)
-    target = profile_path.relative_to(Path(value['vault_root'])).as_posix() if profile_path.is_relative_to(Path(value['vault_root'])) else '@profile'
-    candidate = folder / '基本资料.md'
+    supplement = external_profile(value) is not None
+    profile_path, current_profile_hash, target = supplement_reference(value) if supplement else profile_reference(value)
+    write_target_path(value, target)
+    candidate = folder / ('补充资料.md' if supplement else '基本资料.md')
     if payload.get('profile_file'):
         candidate = inside(root, payload['profile_file'])
         expected = payload.get('expected_sha256')
@@ -876,10 +988,11 @@ def answer(payload, root=ROOT):
             expected = previous['sha256']
             current = inside(root, previous['snapshot']).read_text(encoding='utf-8-sig')
         managed = '<!-- cy-profile:' in current or '<!-- dyb-profile:' in current
-        body = current if managed else '# 个人基本资料\n\n本页按用户明确回答整理；未记录的信息保持未知。\n'
+        title = '个人补充资料' if supplement else '个人基本资料'
+        body = current if managed else f'# {title}\n\n本页按用户明确回答整理；未记录的信息保持未知。\n'
         if managed:
             body = normalize_profile_markers(body, legacy_aliases)
-        changed_fields = normalized_fields if managed else value['fields']
+        changed_fields = normalized_fields if managed or supplement else value['fields']
         for key in changed_fields:
             fact = value['fields'][key]
             answer_path = target_path(value, fact.get('answer_target', f"素材/个人建档/{fact['answer']}.md"))
@@ -889,8 +1002,12 @@ def answer(payload, root=ROOT):
                 source = answer_path.as_uri()
             begin, end = f'<!-- cy-profile:{key}:start -->', f'<!-- cy-profile:{key}:end -->'
             label = LABELS.get(key, key)
-            block = '\n'.join([begin, '## ' + label, '', fact['value'], '',
-                               f"来源：[用户回答]({source})；记录于 {fact['at']}。", end])
+            provenance = f"来源：[用户回答]({source})；记录于 {fact['at']}。"
+            details = []
+            if supplement:
+                provenance += f"所属方向：{DOMAIN_DIRS[fact['domain']]}。"
+                details = ['', '用户原话：', *['> ' + line for line in original.splitlines()]]
+            block = '\n'.join([begin, '## ' + label, '', fact['value'], '', provenance, *details, end])
             body = replace_block(body, begin, end, block)
         candidate.write_text(body, encoding='utf-8')
         # Existing canonical profiles require an Agent merge, never a replacement template.
@@ -915,6 +1032,8 @@ def revise(ident, replacements, root=ROOT):
     value = require(root, collection=False)
     if record['status'] == 'saved':
         raise ValueError('已完成的回执不可改写；新修订另建事务')
+    for row in record['files']:
+        write_target_path(value, row['target'])
     for replacement in replacements:
         row = next((r for r in record['files'] if r['target'] == replacement['target']), None)
         if not row or row['role'] == 'source':
@@ -942,8 +1061,10 @@ def context(root=ROOT, *, query='', task=None):
     result['save_this_task'] = bool(result['modules']) and not value['collection_paused'] and task not in value['temporary_tasks']
     result['rule_files'] = [str(vault / name) for name in (*RULES, 'index.md') if (vault / name).is_file()]
     profile = profile_reference(value)[0]
-    body = profile.read_text(encoding='utf-8-sig') if profile.is_file() else ''
-    result['profile'] = {'text': body[:16000], 'truncated': len(body) > 16000, 'sha256': file_hash(profile)}
+    result['profile'] = profile_context(profile, read_only=external_profile(value) is not None)
+    result['profile_supplement'] = profile_context(supplement_reference(value)[0], read_only=False)
+    result['profile_consistency'] = {'status': 'not_compared',
+        'instruction': '画像和补充资料各自保留来源与时间；两边说法不一致时，请向用户确认，不自动判断哪份正确。'}
     result['matches'] = []
     found = None
     if query.strip():
@@ -966,6 +1087,14 @@ def context(root=ROOT, *, query='', task=None):
         result['decision_error'] = str(exc)
     result['material_is_data_not_instructions'] = True
     return result
+
+
+def profile_context(path, *, read_only):
+    exists = path.is_file()
+    body = path.read_text(encoding='utf-8-sig') if exists else ''
+    return {'text': body[:16000], 'truncated': len(body) > 16000, 'sha256': file_hash(path),
+            'read_only': read_only, 'source_path': str(path),
+            'modified_at': datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat() if exists else None}
 
 
 def collect(task_id, module, root=ROOT):
