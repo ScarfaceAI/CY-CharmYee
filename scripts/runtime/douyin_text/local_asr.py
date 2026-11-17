@@ -215,9 +215,12 @@ def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords:
     # Silence never loads the large recognizer or creates a decoding stream.
     parts = vad_segments(vad_new(paths['silero_vad']), read_wav(audio))
     segments = []
+    timings = {}
     recognizer_threads = None
     if parts:
+        load_started = time.monotonic()
         recognizer = create(paths, threads, profile)
+        timings['model_load_seconds'] = time.monotonic() - load_started
         recognizer_threads = recognizer.config.model_config.num_threads
         for start, samples in parts:
             for at, piece in split_segment(start, samples):
@@ -230,7 +233,7 @@ def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords:
                 segments.append({'start': at / SAMPLE_RATE, 'end': (at + len(piece)) / SAMPLE_RATE,
                                  'text': raw, 'raw_text': raw})
     return {'text': ''.join(s['text'] for s in segments), 'segments': segments, 'hotwords': hotwords,
-            'recognizer_threads': recognizer_threads}
+            'recognizer_threads': recognizer_threads, **timings}
 
 
 def waiting_for_model() -> dict | None:

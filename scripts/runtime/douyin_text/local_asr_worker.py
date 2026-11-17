@@ -36,7 +36,8 @@ def main():
                 recognition_started = time.monotonic()
                 result = local_asr.recognize(Path(request['audio']), paths, request['threads'],
                                              request['profile'], hotwords=request.get('hotwords'))
-                recognition_seconds = time.monotonic() - recognition_started
+                # Silence has no create() call. Keep VAD/decoding time, excluding recognizer creation.
+                recognition_seconds = time.monotonic() - recognition_started - result.get('model_load_seconds', 0)
                 with wave.open(request['audio'], 'rb') as audio:
                     audio_seconds = audio.getnframes() / audio.getframerate()
                 calibration = local_asr.calibrate(request['profile'], request['threads'],

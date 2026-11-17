@@ -8,11 +8,23 @@ from unittest.mock import patch
 
 import support  # noqa: F401
 from support import WorkspaceCase
-from douyin_text import media
+from douyin_text import media, processes
 from douyin_text.processes import Worker, HIDDEN
 
 
 class ProcessTests(WorkspaceCase):
+    def test_mismatched_creation_time_refuses_termination_on_the_checked_handle(self):
+        with patch.object(processes, '_kernel') as kernel, \
+             patch.object(processes, '_birth', return_value='reused-birth') as birth:
+            api = kernel.return_value
+            api.OpenProcess.return_value = 456
+            with self.assertRaisesRegex(RuntimeError, '身份已变化'):
+                processes.terminate_registered({'pid': 123, 'process_birth': 'registered-birth'})
+            api.OpenProcess.assert_called_once_with(0x1000 | 0x100000 | 1, False, 123)
+            birth.assert_called_once_with(api, 456)
+            api.TerminateProcess.assert_not_called()
+            api.CloseHandle.assert_called_once_with(456)
+
     def helper(self):
         script = self.root / 'worker.py'
         script.write_text('''import json,os,sys,time,subprocess

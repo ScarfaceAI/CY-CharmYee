@@ -119,8 +119,8 @@ def count_chunks(data: dict, root: Path) -> dict:
 def status(task_id: str, root: Path = ROOT) -> dict:
     from . import workflow
     task = workflow.load(task_id, root)
-    if finished(task):
-        return task  # Exactly the same result summary as show, including the review stage.
+    if task['status'] not in {'transcribing_in_background', 'running', 'cancelled'}:
+        return task  # Preserve normal outcomes, including failures and model-wait instructions.
     run = record(task_id, root)
     path = folder(task_id, root) / 'asr-progress.json'
     data = read_json(path) if path.is_file() else {}
@@ -138,10 +138,10 @@ def status(task_id: str, root: Path = ROOT) -> dict:
               'audio_duration_seconds': data.get('audio_duration_seconds', 0),
               'estimated_seconds': round(data.get('estimated_seconds', 0), 3),
               'speed_coefficient': data.get('speed_coefficient', 0.3)}
-    if run.get('background') and not alive and task['status'] != 'cancelled':
-        result.update(status='interrupted', tell_user='后台识别已中断，已完成的分片已保留；再次 run 即可续接。')
+    if run and not alive and task['status'] in {'transcribing_in_background', 'running'}:
+        result.update(status='interrupted', tell_user='本地识别已中断，已完成的分片已保留；再次 run 即可续接。')
     elif task['status'] == 'cancelled':
-        result['tell_user'] = '后台识别已取消，已完成的分片已保留；再次 run 即可续接。'
+        result.setdefault('tell_user', '后台识别已取消，已完成的分片已保留；再次 run 即可续接。')
     elif alive and run.get('background'):
         result['status'] = 'transcribing_in_background'
         result['tell_user'] = (f"后台识别已完成 {counts['completed_chunks']}／{counts['total_chunks']} 个分片，"
@@ -160,7 +160,7 @@ def register_foreground(task_id: str, root: Path):
 def child_identity(child, path: Path, token: str) -> dict:
     # Windows venv python.exe may be a redirector. Register the actual interpreter,
     # which owns the task lock and the inference Job, rather than its launcher PID.
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not path.is_file():
         if child.poll() is not None or time.monotonic() >= deadline:
             raise RuntimeError('后台识别启动握手未完成，详情见任务目录的 background.log。')
@@ -218,7 +218,7 @@ def cancel(task_id: str, root: Path = ROOT) -> dict:
     run = record(task_id, root)
     if not run.get('background'):
         return {**task, 'tell_user': '这是前台任务，不能用 cancel 取消；请在启动它的终端按 Ctrl+C 中断。'}
-    if processes._process_birth(run.get('pid', 0)) is None:
+    if not processes.alive(run):
         return status(task_id, root)
     processes.terminate_registered(run)
     # A concurrent run may have resumed already; never overwrite that new run's state.
@@ -238,7 +238,7 @@ def cancel(task_id: str, root: Path = ROOT) -> dict:
 
 def execute(task_id: str, root: Path, token: str) -> dict:
     from . import workflow
-    with task_lock(task_id, root, wait_timeout=5):
+    with task_lock(task_id, root, wait_timeout=30):
         run = record(task_id, root)
         if (run.get('token') != token or run.get('pid') != os.getpid() or not processes.alive(run)):
             raise RuntimeError('后台识别身份不匹配，未开始任务。')

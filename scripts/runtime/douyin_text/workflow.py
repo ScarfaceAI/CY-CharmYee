@@ -489,6 +489,23 @@ def _run(task_id: str, root: Path = ROOT, *, retry_evidence: str = "", anonymous
                 for job in ready_jobs:
                     recognize_ready(job)
 
+        if local_worker is not None:
+            needs_model = bool(pending)
+            for job in jobs:
+                if needs_model:
+                    break
+                try:
+                    needs_model = cached_result(job, task, root) is None
+                except (OSError, ValueError, RuntimeError):
+                    # Invalid caches still follow the existing per-media failure path once the model is ready.
+                    needs_model = True
+            if needs_model:
+                waiting = local_asr.waiting_for_model()
+                if waiting:
+                    task.update(waiting)
+                    task['run_timing']['elapsed_seconds'] = round(time.monotonic() - run_started, 3)
+                    save(task, root)
+                    return task
         if pending:
             try:
                 if any(value.startswith('http') for value in pending):

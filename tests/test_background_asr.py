@@ -136,12 +136,9 @@ class BackgroundASRTests(WorkspaceCase):
         self.assertIn('再次 run', state['tell_user'])
         with patch.object(processes, '_kernel') as kernel, patch.object(processes, '_process_birth', return_value='different'):
             api = kernel.return_value
-            api.OpenProcess.return_value = 123
-            with patch.object(processes, '_birth', return_value='different'):
-                with self.assertRaisesRegex(RuntimeError, '身份已变化'):
-                    background.cancel(task['id'], self.root)
+            self.assertEqual('interrupted', background.cancel(task['id'], self.root)['status'])
             api.TerminateProcess.assert_not_called()
-            api.CloseHandle.assert_called_once_with(123)
+            kernel.assert_not_called()
 
     def test_termination_checks_and_ends_the_same_handle(self):
         with patch.object(processes, '_kernel') as kernel, patch.object(processes, '_birth', return_value='birth') as birth:
@@ -165,7 +162,8 @@ class BackgroundASRTests(WorkspaceCase):
         progress = read_json(background.folder(task['id'], self.root) / 'asr-progress.json')
         receipt = self.root / progress['chunks'][0]['receipt']
         before = receipt.read_bytes()
-        with patch.object(processes, 'terminate_registered') as terminate, patch.object(processes, 'alive', return_value=False):
+        with patch.object(processes, 'terminate_registered') as terminate, \
+             patch.object(processes, 'alive', side_effect=[True, False]):
             self.assertEqual('cancelled', background.cancel(task['id'], self.root)['status'])
         terminate.assert_called_once()
         # Simulate the old child being gone, then let the fake new child own the task.
@@ -325,4 +323,135 @@ runpy.run_module('douyin_text.background', run_name='__main__')
                 processes.terminate_registered(run)
             for child in children:
                 child.wait(timeout=5)
+
+    def test_status_preserves_background_failure_after_normal_exit(self):
+        self.configure(asr_background_threshold_seconds=0)
+        task = self.task()
+        self.launch(task)
+        self.worker.recognize.side_effect = [recognized(), RuntimeError('测试分片识别失败')]
+        done = background.execute(task['id'], self.root, 'fake')
+        self.assertEqual('incomplete', done['status'])
+        self.assertEqual('测试分片识别失败', done['failures'][0]['error'])
+        for alive in (False, True):  # The normal outcome also wins while the process is still closing.
+            with self.subTest(alive=alive), patch.object(processes, 'alive', return_value=alive):
+                self.assertEqual(done, background.status(task['id'], self.root))
+        done.update(status='failed', tell_user='识别失败，请查看分片错误。')
+        workflow.save(done, self.root)
+        with patch.object(processes, 'alive', return_value=False):
+            self.assertEqual(done, background.status(task['id'], self.root))
+
+    def test_status_preserves_background_waiting_model_outcome(self):
+        self.configure(asr_background_threshold_seconds=0)
+        task = self.task()
+        self.launch(task)
+        waiting = {'status': 'waiting_model', 'model_status': {'ready': False},
+                   'tell_user': '模型尚未就绪，请等待下载完成后再次 run。'}
+        with patch.object(local_asr, 'waiting_for_model', return_value=waiting):
+            done = background.execute(task['id'], self.root, 'fake')
+        self.assertEqual('waiting_model', done['status'])
+        self.assertEqual(waiting['tell_user'], done['tell_user'])
+        with patch.object(processes, 'alive', return_value=False):
+            self.assertEqual(done, background.status(task['id'], self.root))
+
+    def test_status_reports_dead_registered_foreground_as_interrupted(self):
+        task = self.task()
+        task['status'] = 'running'
+        workflow.save(task, self.root)
+        background.register_foreground(task['id'], self.root)
+        with patch.object(processes, 'alive', return_value=False):
+            state = background.status(task['id'], self.root)
+        self.assertEqual('interrupted', state['status'])
+        self.assertFalse(state['process_alive'])
+        self.assertFalse(state['background_process_alive'])
+        self.assertIn('再次 run', state['tell_user'])
+        self.assertEqual('running', workflow.load(task['id'], self.root)['status'])
+
+    def test_status_does_not_infer_interruption_without_local_registration(self):
+        task = self.task()
+        task.update(status='running', asr_engine='doubao')
+        workflow.save(task, self.root)
+        self.assertEqual('running', background.status(task['id'], self.root)['status'])
+
+    def test_missing_model_blocks_audio_preparation_and_handoff(self):
+        self.configure(asr_background_threshold_seconds=0)
+        waiting = {'status': 'waiting_model', 'model_status': {'ready': False},
+                   'tell_user': '本地识别模型正在下载，请稍后再次 run。'}
+        for source in (str(self.wav), 'https://www.douyin.com/video/1234567890123456789'):
+            with self.subTest(source=source):
+                task = workflow.plan([source], self.root)
+                workflow.confirm(task['id'], 'transcribe', '测试模型未就绪', root=self.root)
+                with patch.object(local_asr, 'waiting_for_model', return_value=waiting) as check, \
+                     patch.object(media, 'extract') as extract, patch.object(media, 'acquire_batch') as acquire, \
+                     patch.object(background, 'start') as start:
+                    state = workflow.run(task['id'], self.root)
+                check.assert_called_once_with()
+                extract.assert_not_called()
+                acquire.assert_not_called()
+                start.assert_not_called()
+                self.assertEqual('waiting_model', state['status'])
+                self.assertEqual(waiting['tell_user'], state['tell_user'])
+                self.assertEqual(waiting['model_status'], state['model_status'])
+                self.assertEqual(state, workflow.load(task['id'], self.root))
+        self.worker.recognize.assert_not_called()
+
+    def test_all_cached_results_skip_model_check_with_background_threshold_zero(self):
+        done = workflow.run(self.task()['id'], self.root)
+        self.assertEqual('awaiting_review', done['status'])
+        task = self.task()
+        self.configure(asr_background_threshold_seconds=0)
+        with patch.object(local_asr, 'waiting_for_model', side_effect=AssertionError('缓存不需要模型')) as check, \
+             patch.object(media, 'extract') as extract, patch.object(background, 'start') as start:
+            reused = workflow.run(task['id'], self.root)
+        check.assert_not_called()
+        extract.assert_not_called()
+        start.assert_not_called()
+        self.assertEqual('awaiting_review', reused['status'])
+        self.assertEqual('reused', reused['results'][0]['status'])
+        self.assertEqual(done['results'][0]['result'], reused['results'][0]['result'])
+
+    def test_first_worker_chunk_calibration_excludes_recognizer_creation(self):
+        import numpy as np
+        clock = [0.0]
+        def advance(seconds, result):
+            clock[0] += seconds
+            return result
+        recognizer = Mock(config=SimpleNamespace(model_config=SimpleNamespace(num_threads=3)),
+                          create_stream=Mock(return_value=Mock(result=SimpleNamespace(text='测试原文。'))))
+        recognizer.decode_stream.side_effect = lambda stream: advance(5, None)
+        request = self.root / 'request.json'
+        response, progress = self.root / 'response.json', self.root / 'progress.json'
+        profile = local_asr.specification()['asr_profile']
+        write_json(request, {'queue_timeout': 600, 'audio': str(self.wav), 'threads': 3,
+                            'profile': profile, 'response_file': str(response), 'progress_file': str(progress)})
+        stdin = SimpleNamespace(buffer=io.BytesIO((str(request) + '\n').encode()))
+        with patch.object(sys, 'stdin', stdin), patch.object(local_asr, 'recognition_lock', return_value=nullcontext()), \
+             patch.object(local_asr_worker.models, 'ready_paths', side_effect=lambda **k: advance(100, {'silero_vad': 'vad'})), \
+             patch.object(local_asr, 'vad_new'), \
+             patch.object(local_asr, 'vad_segments', side_effect=lambda *a: advance(2, [(0, np.ones(1600))])), \
+             patch.object(local_asr, 'create', side_effect=lambda *a: advance(30, recognizer)), \
+             patch.object(local_asr.time, 'monotonic', side_effect=lambda: clock[0]):
+            local_asr_worker.main()
+        result = read_json(response)['result']
+        self.assertEqual(30, result['model_load_seconds'])
+        self.assertEqual(137, result['elapsed_seconds'])
+        self.assertEqual(7, result['recognition_seconds'])
+        self.assertEqual(7 / 3.2, result['calibration']['last_ratio'])
+        self.assertEqual(7 / 3.2, local_asr.speed_coefficient(profile, 3))
+
+    def test_handshake_accepts_delayed_start_before_thirty_seconds(self):
+        path = self.root / 'delayed-start.json'
+        identity = {'pid': os.getpid(), 'parent_pid': 99999, 'token': 'token',
+                    'process_birth': processes._process_birth(os.getpid())}
+        write_json(path, identity)
+        child = Mock(pid=99999, poll=Mock(return_value=None))
+        with patch.object(Path, 'is_file', side_effect=[False, False, True]), \
+             patch.object(background.time, 'monotonic', side_effect=[0, 6, 29]), \
+             patch.object(background.time, 'sleep') as sleep:
+            self.assertEqual(identity, background.child_identity(child, path, 'token'))
+        self.assertEqual(2, sleep.call_count)
+        with patch.object(Path, 'is_file', return_value=False), \
+             patch.object(background.time, 'monotonic', side_effect=[0, 29, 30]), \
+             patch.object(background.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, '启动握手未完成'):
+                background.child_identity(child, path, 'token')
 
