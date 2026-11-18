@@ -173,7 +173,11 @@ def run(additions: list[str] | None = None, *, clear=False, root: Path = ROOT) -
     failed = [method for method in METHODS if any(row['method'] == method and row['status'] == 'failed' for row in rows)]
     skipped = [method for method in METHODS if all(row['status'] == 'skipped' for row in rows if row['method'] == method)]
     available = len(METHODS) - len(failed) - len(skipped)
-    routes = ['public_share', 'anonymous_browser'] + (['existing_profile'] if profile.is_dir() else [])
+    # Samples no anonymous method could fetch; only these need the manual fallback.
+    blocked = [number for number in range(1, len(values) + 1)
+               if not any(row['sample'] == number and row['method'] != LAST_RESORT and row['status'] == 'passed'
+                          for row in rows)]
+    routes = ['anonymous_browser', 'public_share'] + (['existing_profile'] if profile.is_dir() else [])
     ordered, adjustment = route_order(root, routes)
     message = f'4 种方式里 {available} 种可用'
     if failed:
@@ -185,7 +189,8 @@ def run(additions: list[str] | None = None, *, clear=False, root: Path = ROOT) -
     elif failed:
         message += '；路线顺序未变，后续获取仍会逐条尝试'
     result = {'status': 'incomplete' if failed else 'passed', 'sample_count': len(values),
-              'available_methods': available, 'results_file': '.local/selftest/results.json',
+              'available_methods': available, 'anonymous_unavailable_samples': blocked,
+              'results_file': '.local/selftest/results.json',
               'results': rows, 'route_order': ordered, 'tell_user': message + '。'}
     if adjustment:
         result['route_adjustment'] = adjustment

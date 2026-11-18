@@ -288,9 +288,29 @@ class SelftestTests(unittest.TestCase):
         self.results.write_text('{broken', encoding='utf-8')
         self.assertEqual((ROUTES, None), selftest.route_order(self.root, ROUTES))
 
+    def test_metadata_starts_with_the_browser_while_the_share_page_is_a_shell(self):
+        calls = []
+        def browse(urls, profile):
+            calls.append('anonymous_browser')
+            return [job()], []
+        def public(urls):
+            calls.append('public_share')
+            return [], [{'input_url': URL, 'reason': 'metadata_unavailable'}]
+        report = self.root / 'metadata.json'
+        with patch.object(browser, 'videos', side_effect=browse), \
+                patch.object(acquisition, 'public_metadata', side_effect=public):
+            jobs, failures = media.metadata([URL], self.profile, report, root=self.root)
+        self.assertEqual(['anonymous_browser'], calls)
+        self.assertEqual((1, []), (len(jobs), failures))
+        self.assertNotIn('route_adjustment', read_json(report))
+        # A recent share-page failure leaves the default order, so nothing is reported as moved.
+        self.save_health({'public_share'}, age=1)
+        default = ['anonymous_browser', 'public_share']
+        self.assertEqual((default, None), selftest.route_order(self.root, default))
+
     def test_metadata_reorders_but_still_attempts_failed_route_and_reports_why(self):
         self.profile.mkdir(parents=True)
-        self.save_health({'public_share'}, age=1)
+        self.save_health({'anonymous_browser', 'yt_dlp'}, age=1)
         calls = []
         failure = {'input_url': URL, 'reason': 'metadata_unavailable'}
         def browse(urls, profile):
@@ -303,7 +323,7 @@ class SelftestTests(unittest.TestCase):
         with patch.object(browser, 'videos', side_effect=browse), \
                 patch.object(acquisition, 'public_metadata', side_effect=public):
             jobs, failures = media.metadata([URL], self.profile, report, root=self.root)
-        self.assertEqual(['anonymous_browser', 'public_share', 'existing_profile'], calls)
+        self.assertEqual(['public_share', 'anonymous_browser', 'existing_profile'], calls)
         self.assertEqual(1, len(jobs))
         self.assertFalse(failures)
         saved = read_json(report)
@@ -314,39 +334,55 @@ class SelftestTests(unittest.TestCase):
 
     def test_discover_passes_workspace_and_anonymous_only_keeps_profile_excluded(self):
         self.profile.mkdir(parents=True)
-        self.save_health({'public_share'})
+        self.save_health({'anonymous_browser', 'yt_dlp'})
         calls = []
         def browse(urls, profile):
             calls.append(profile)
-            return [], [{'input_url': URL, 'reason': 'metadata_unavailable'}]
+            return [job()], []
         with patch.object(browser, 'videos', side_effect=browse), \
-                patch.object(acquisition, 'public_metadata', return_value=([job()], [])):
+                patch.object(acquisition, 'public_metadata',
+                             return_value=([], [{'input_url': URL, 'reason': 'metadata_unavailable'}])):
             jobs = media.discover([URL], {}, self.root, self.root, anonymous_only=True)
         self.assertEqual([None], calls)
         self.assertEqual(1, len(jobs))
         report = read_json(self.root / 'metadata-0.json')
-        self.assertEqual(['anonymous_browser', 'public_share'], report['route_adjustment']['order'])
+        self.assertEqual(['public_share', 'anonymous_browser'], report['route_adjustment']['order'])
         self.assertTrue(report['anonymous_first'])
 
     def test_expired_failures_use_default_metadata_route_without_adjustment_report(self):
-        self.save_health({'public_share'}, age=25)
-        with patch.object(acquisition, 'public_metadata', return_value=([job()], [])), \
-                patch.object(browser, 'videos') as fetch:
+        self.save_health({'anonymous_browser', 'yt_dlp'}, age=25)
+        with patch.object(browser, 'videos', return_value=([job()], [])), \
+                patch.object(acquisition, 'public_metadata') as public:
             media.metadata([URL], self.profile, self.root / 'metadata.json', root=self.root)
-        fetch.assert_not_called()
+        public.assert_not_called()
         self.assertNotIn('route_adjustment', read_json(self.root / 'metadata.json'))
 
     def test_failure_fallback_is_added_by_shared_exit_once_per_conversation(self):
         self.fake_methods()
-        with patch.object(acquisition, 'public_metadata', return_value=([], [{'reason': 'http_error'}])):
+        with patch.object(acquisition, 'public_metadata', return_value=([], [{'reason': 'http_error'}])), \
+                patch.object(browser, 'browser_videos', return_value=([], [{'reason': 'verification_required'}])), \
+                patch.object(browser, '_yt_dlp_video', side_effect=RuntimeError('需要新的 Cookie')):
             for number in range(2):
                 code, result = self.invoke('--sample', URL)
                 self.assertEqual(1, code)
+                self.assertEqual([1], result['anonymous_unavailable_samples'])
                 self.assertEqual(number == 0, messages.ACQUISITION_FALLBACK in result['tell_user'])
-                self.assertIn('已后移', result['tell_user'])
+                self.assertIn('路线顺序未变', result['tell_user'])
             with patch.dict(os.environ, {'CY_SESSION_ID': 'another-selftest-chat'}):
                 _, result = self.invoke()
         self.assertIn(messages.ACQUISITION_FALLBACK, result['tell_user'])
+
+    def test_no_manual_fallback_while_one_anonymous_method_still_works(self):
+        self.fake_methods()
+        with patch.object(acquisition, 'public_metadata', return_value=([], [{'reason': 'metadata_unavailable'}])), \
+                patch.object(browser, '_yt_dlp_video', side_effect=RuntimeError('需要新的 Cookie')):
+            code, result = self.invoke('--sample', URL)
+        self.assertEqual((1, 'incomplete'), (code, result['status']))
+        self.assertEqual([], result['anonymous_unavailable_samples'])
+        self.assertIn('获取失败：公开分享页、yt-dlp', result['tell_user'])
+        self.assertIn('路线顺序未变', result['tell_user'])
+        self.assertNotIn(messages.ACQUISITION_FALLBACK, result['tell_user'])
+        self.assertEqual(['anonymous_browser', 'public_share'], result['route_order'])
 
 
 class BrowserIsolationTests(unittest.TestCase):

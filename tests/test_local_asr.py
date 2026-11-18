@@ -90,6 +90,19 @@ class LocalASRTests(WorkspaceCase):
         self.assertEqual(result['segments'][0]['end'], result['segments'][1]['start'])
         self.assertTrue(all(s['raw_text'] == s['text'] for s in result['segments']))
 
+    def test_model_markup_never_reaches_the_transcript(self):
+        import numpy as np
+        texts = iter(['<asr_text>你能坚持几天呢？', 'language Chinese<asr_text>配个馒头。</asr_text>'])
+        recognizer = Mock(create_stream=Mock(side_effect=lambda: Mock(result=SimpleNamespace(text=next(texts)))))
+        with patch.object(local_asr, 'vad_new'), patch.object(local_asr, 'vad_segments', return_value=[
+                (0, np.ones(16000, dtype=np.float32)), (32000, np.ones(16000, dtype=np.float32))]), \
+             patch.object(local_asr, 'create', return_value=recognizer):
+            result = local_asr.recognize(self.wav, {'silero_vad': 'vad'}, 2, 'profile')
+        self.assertEqual(['你能坚持几天呢？', '配个馒头。'], [s['raw_text'] for s in result['segments']])
+        self.assertEqual('你能坚持几天呢？配个馒头。', result['text'])
+        # Ordinary speech that mentions the word "language" is kept.
+        self.assertEqual('my language is Chinese', local_asr.model_text('my language is Chinese'))
+
     def test_no_vad_segments_never_loads_recognizer(self):
         with patch.object(local_asr, 'vad_new'), patch.object(local_asr, 'vad_segments', return_value=[]), \
              patch.object(local_asr, 'create') as create:

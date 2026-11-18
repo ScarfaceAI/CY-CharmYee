@@ -207,7 +207,8 @@ class HotwordTests(WorkspaceCase):
         self.assertEqual('成亿', row['sentence'][row['offset_start']:row['offset_end']])
 
     def test_disabled_workflow_and_completed_chunks_do_not_listen_again(self):
-        write_json(self.root / 'config.json', {**config(self.root), 'asr_engine': 'local', 'asr_hotwords': False})
+        # Off by default: in the benchmark, re-listening with hotwords never fixed anything.
+        write_json(self.root / 'config.json', {**read_json(self.root / 'config.json'), 'asr_engine': 'local'})
         task = self.task()
         worker = Mock(recognize=Mock(side_effect=[recognized(), RuntimeError('中断')]))
         with patch.object(local_asr, 'waiting_for_model', return_value=None), \
@@ -265,10 +266,10 @@ class HotwordTests(WorkspaceCase):
         worker = object.__new__(local_asr.Worker)
         worker.process = Mock(stdin=Mock(write=Mock(side_effect=respond)))
         cfg = config(self.root)
-        self.assertIs(True, cfg['asr_hotwords'])
+        self.assertIs(False, cfg['asr_hotwords'])
         self.assertEqual(hotwords.DEFAULT_LIMIT, cfg['asr_hotwords_limit'])
+        worker.recognize(self.wav, self.root, {**cfg, 'asr_hotwords': True}, 'profile', hotwords=selected)
         worker.recognize(self.wav, self.root, cfg, 'profile', hotwords=selected)
-        worker.recognize(self.wav, self.root, {**cfg, 'asr_hotwords': False}, 'profile', hotwords=selected)
         self.assertEqual(selected, requests[0]['hotwords'])
         self.assertEqual([], requests[1]['hotwords'])
 
@@ -372,7 +373,7 @@ class HotwordTests(WorkspaceCase):
             self.assertEqual(hit['original'], review['raw_text'][hit['start']:hit['end']])
 
     def test_multiple_wav_chunks_shift_review_times_and_segment_positions(self):
-        write_json(self.root / 'config.json', {**config(self.root), 'asr_engine': 'local'})
+        write_json(self.root / 'config.json', {**config(self.root), 'asr_engine': 'local', 'asr_hotwords': True})
         raw = '成亿。'
         item = recognized(raw)
         hit = hotwords.locate_hit(hotwords.compare(raw, '承意。', ['承意'])['hits'][0], item['segments'], 1)
