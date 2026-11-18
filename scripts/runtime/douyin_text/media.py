@@ -74,8 +74,10 @@ def metadata(urls: list[str], profile: Path, report: Path, *, anonymous_only=Fal
              root: Path = ROOT) -> tuple[list[dict], list[dict]]:
     result, attempts, diagnostics = [], [], []
     seen, pending = set(), list(urls)
-    routes = {'public_share': ('public_share', 'anonymous', None),
-              'anonymous_browser': ('playwright_with_ytdlp_fallback', 'anonymous', None)}
+    # Since August 2026 the share page is served as an empty shell, so the browser leads and the
+    # share page stays as a cheap fallback in case its data returns.
+    routes = {'anonymous_browser': ('playwright_with_ytdlp_fallback', 'anonymous', None),
+              'public_share': ('public_share', 'anonymous', None)}
     if not anonymous_only and profile.is_dir():
         routes['existing_profile'] = ('playwright_with_ytdlp_fallback', 'existing_profile', profile)
     ordered, adjustment = selftest.route_order(root, list(routes))

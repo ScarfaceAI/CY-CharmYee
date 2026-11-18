@@ -27,15 +27,19 @@ class AcquisitionTests(WorkspaceCase):
         self.assertEqual("123", acquisition.parse_public_detail(render, "123")["aweme_id"])
         self.assertIsNone(acquisition.parse_public_detail("window._ROUTER_DATA = execute()", "123"))
 
-    def test_http_public_request_needs_no_cookie_and_skips_browser(self):
+    def test_share_page_is_the_cookie_free_fallback_after_the_browser(self):
         body = "window._ROUTER_DATA = " + json.dumps({"item": video()})
+        failure = {"input_url": URL, "reason": "verification_required"}
         with patch.object(acquisition.request, "urlopen", return_value=io.BytesIO(body.encode())) as fetch, \
-                patch.object(browser, "videos", side_effect=AssertionError("browser must not run")):
+                patch.object(browser, "videos", return_value=([], [failure])) as browse:
             jobs, failures = media.metadata([URL], self.root / "profile", self.root / "report.json")
+        browse.assert_called_once_with([URL], None)
         self.assertEqual("douyin-123", jobs[0]["id"])
         self.assertFalse(failures)
         self.assertNotIn("Cookie", fetch.call_args.args[0].headers)
         self.assertFalse((self.root / "profile").exists())
+        attempts = read_json(self.root / "report.json")["attempts"]
+        self.assertEqual(["playwright_with_ytdlp_fallback", "public_share"], [item["backend"] for item in attempts])
 
     def test_anonymous_browser_precedes_existing_profile(self):
         profile = self.root / "profile"

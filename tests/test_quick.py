@@ -266,6 +266,12 @@ class QuickTests(WorkspaceCase):
             with self.subTest(status=status):
                 self.assertIn('未全部完成', messages.tell_user({'status': status})['tell_user'])
 
+    def test_answered_question_is_not_asked_again(self):
+        task = {'status': 'confirmed', 'purpose': 'transcribe', 'question': '本次要做什么？只转写还是分析？'}
+        self.assertEqual('', messages.tell_user(task)['tell_user'])
+        self.assertEqual('本次要做什么？只转写还是分析？',
+                         messages.tell_user({**task, 'status': 'needs_intent'})['tell_user'])
+
     def test_acquisition_exception_at_json_boundary_has_fallback(self):
         with patch.object(quick, 'run', side_effect=acquisition.AcquisitionError([{'reason': 'http_error'}])):
             code, result = self.invoke('quick', 'https://www.douyin.com/video/123456789')

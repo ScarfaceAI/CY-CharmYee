@@ -81,6 +81,9 @@ def claimed_notices() -> set[str]:
 
 
 def acquisition_failed(result: dict, command: str = '', root: Path = ROOT) -> bool:
+    if command == 'selftest':
+        # One failed probe is not a failed acquisition while another anonymous method still works.
+        return bool(result.get('anonymous_unavailable_samples'))
     if result.get('stage') in ACQUISITION_STAGES or result.get('reason') in ACQUISITION_REASONS:
         return True
     if command == 'inspect-source' and result.get('status') in {'error', 'failed', 'incomplete'}:
@@ -149,8 +152,10 @@ def tell_user(result: dict, *, command: str = '', update_notice: str = '', root:
         if result.get('error') or result.get('status') in {'error', 'failed', 'incomplete', 'publish_failed', 'publication_unknown'}:
             own = '这次处理未全部完成，请查看返回的 error 或 failures，处理原因后再续做。'
         else:
-            own = next((result[key] for key in ('hint', 'message', 'next', 'question')
-                        if isinstance(result.get(key), str) and result[key].strip()), '')
+            status = str(result.get('status') or '')
+            # A stored question is stale once its task has moved past waiting for the answer.
+            keys = ('hint', 'message', 'next') + (('question',) if not status or status.startswith('needs_') else ())
+            own = next((result[key] for key in keys if isinstance(result.get(key), str) and result[key].strip()), '')
     extra = []
     try:
         key, notice = download_notice(result)
