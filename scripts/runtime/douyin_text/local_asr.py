@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import uuid
@@ -16,6 +17,14 @@ import wave
 
 from . import models, processes, hotwords as hotword_rules, lexicon
 from .common import read_json, write_json
+
+# Qwen3-ASR writes "language <name><asr_text>" before its transcript. sherpa-onnx removes it,
+# but short segments have been seen to keep the tag, which then reached the transcript.
+MODEL_MARKUP = re.compile(r'(?:language\s+[A-Za-z]+\s*)?<asr_text>|</asr_text>')
+
+
+def model_text(text: str) -> str:
+    return MODEL_MARKUP.sub('', text)
 
 ENGINE = 'sherpa-onnx-qwen3-asr'
 SAMPLE_RATE = 16000
@@ -231,7 +240,7 @@ def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords=
                 stream = recognizer.create_stream()
                 stream.accept_waveform(SAMPLE_RATE, piece)
                 recognizer.decode_stream(stream)
-                raw = stream.result.text
+                raw = model_text(stream.result.text)
                 segments.append({'start': at / SAMPLE_RATE, 'end': (at + len(piece)) / SAMPLE_RATE,
                                  'text': raw, 'raw_text': raw})
             if hotwords:
@@ -260,7 +269,7 @@ def recognize(audio: Path, paths: dict, threads: int, profile: str, *, hotwords=
                     stream.set_option('hotwords', ','.join(words))
                     stream.accept_waveform(SAMPLE_RATE, samples[audio_start:audio_end])
                     recognizer.decode_stream(stream)
-                    candidate = stream.result.text
+                    candidate = model_text(stream.result.text)
                     seconds = time.monotonic() - listened
                     comparison = hotword_rules.compare(raw[raw_start:raw_end], candidate, words,
                                                        general if general_status['ready'] else None)
@@ -322,7 +331,7 @@ class Worker(processes.Worker):
         progress = request_file.with_suffix('.progress.json')
         write_json(request_file, {'audio': str(audio), 'threads': thread_count(cfg), 'profile': profile,
             'queue_timeout': cfg['asr_queue_timeout_seconds'],
-            'hotwords': (hotwords or []) if cfg.get('asr_hotwords', True) else [],
+            'hotwords': (hotwords or []) if cfg.get('asr_hotwords', False) else [],
             'response_file': str(response), 'progress_file': str(progress)})
         self.process.stdin.write((str(request_file) + '\n').encode('utf-8'))
         self.process.stdin.flush()

@@ -254,7 +254,8 @@ class SuspectTests(WorkspaceCase):
         self.assertIn('有 2 处疑点', done['tell_user'])
 
     def test_local_run_automatically_generates_hints_without_extra_asr(self):
-        write_json(self.root / 'config.json', {**read_json(self.root / 'config.json'), 'asr_engine': 'local', 'chunk_seconds': 300})
+        write_json(self.root / 'config.json', {**read_json(self.root / 'config.json'), 'asr_engine': 'local',
+                                               'chunk_seconds': 300, 'number_conversion': True})
         raw = '十五天。'
         result = {**local_asr.specification(), 'text': raw,
                   'segments': [{'start': 0, 'end': 2, 'text': raw, 'raw_text': raw}],

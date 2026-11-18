@@ -24,7 +24,9 @@ def recognized():
 
 class DisplayTests(WorkspaceCase):
     def configure(self, **values):
-        write_json(self.root / 'config.json', {**read_json(self.root / 'config.json'),
+        # These cases exercise number conversion, so it is on unless a case turns it off.
+        # The real default (off) is covered by test_numbers_stay_as_spoken_by_default.
+        write_json(self.root / 'config.json', {'number_conversion': True, **read_json(self.root / 'config.json'),
                    'asr_engine': 'local', 'chunk_seconds': 300, **values})
 
     def local_run(self, task=None):
@@ -73,6 +75,17 @@ class DisplayTests(WorkspaceCase):
         self.assertTrue(exported['files'], exported)
         self.assertIn('仅有 182 毫克', Path(exported['files'][0]).read_text(encoding='utf-8'))
         self.assertFalse(exported['skipped'])
+
+    def test_numbers_stay_as_spoken_by_default(self):
+        # The benchmark found no fixes from number conversion, so by default only spacing is applied.
+        write_json(self.root / 'config.json', {**read_json(self.root / 'config.json'),
+                   'asr_engine': 'local', 'chunk_seconds': 300})
+        result = read_json(self.path(self.local_run()['results'][0]['result']))
+        self.assertEqual('只有一百八十二毫克，腾讯的十八个智能体，手游 FPS 的上限。', result['text'])
+        self.assertEqual(''.join(RAW), result['raw_text'])
+        self.assertIs(False, result['display']['number_conversion'])
+        self.assertIs(True, result['display']['cjk_spacing'])
+        self.assertEqual({'cjk_spacing'}, {c['layer'] for s in result['display']['segments'] for c in s['changes']})
 
     def test_switches_off_keep_raw_verbatim_and_invalid_options_fail_before_asr(self):
         self.configure(number_conversion=False, cjk_spacing=False)
