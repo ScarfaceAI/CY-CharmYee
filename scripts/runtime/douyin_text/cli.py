@@ -40,7 +40,7 @@ def doctor() -> dict:
             "execution_route": {"mode": "bundled_local_engine", "asr_provider": "doubao_voice_api",
                                 "asr_endpoint": asr.ENDPOINT, "asr_module": str(Path(asr.__file__).resolve()),
                                 "browser_role": "douyin_login_and_media_acquisition_only",
-                                "acquisition": "anonymous_public_page_then_browser_then_existing_profile",
+                                "acquisition": "anonymous_browser_then_public_share_then_existing_profile",
                                 "acquisition_headless": True, "computer_use_required": False,
                                 "review_capabilities": "reported_from_current_agent_tools_not_agent_name",
                                 "web_transcription_fallback": False},

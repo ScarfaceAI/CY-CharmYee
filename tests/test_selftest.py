@@ -308,6 +308,23 @@ class SelftestTests(unittest.TestCase):
         default = ['anonymous_browser', 'public_share']
         self.assertEqual((default, None), selftest.route_order(self.root, default))
 
+    def test_doctor_reports_the_order_metadata_tries(self):
+        self.profile.mkdir(parents=True)
+        calls = []
+        failure = {'input_url': URL, 'reason': 'metadata_unavailable'}
+        def browse(urls, profile):
+            calls.append('anonymous_browser' if profile is None else 'existing_profile')
+            return [], [failure]
+        def public(urls):
+            calls.append('public_share')
+            return [], [failure]
+        with patch.object(browser, 'videos', side_effect=browse),                 patch.object(acquisition, 'public_metadata', side_effect=public):
+            media.metadata([URL], self.profile, self.root / 'metadata.json', root=self.root)
+        with patch.object(cli, 'ROOT', self.root):
+            label = cli.doctor()['execution_route']['acquisition']
+        self.assertEqual(['anonymous_browser', 'public_share', 'existing_profile'], calls)
+        self.assertEqual('_then_'.join(calls), label)
+
     def test_metadata_reorders_but_still_attempts_failed_route_and_reports_why(self):
         self.profile.mkdir(parents=True)
         self.save_health({'anonymous_browser', 'yt_dlp'}, age=1)
